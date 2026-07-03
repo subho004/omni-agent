@@ -155,6 +155,12 @@
   .md hr { border: 0; border-top: 1px solid var(--border); margin: .8em 0; }
   .tool { font-size: 12px; color: var(--muted); margin: 3px 0 0 4px; }
   .tool code { color: var(--accent); }
+  /* Nested child sub-agents (spawn_subagents fan-out) under a plan step. */
+  .subagent { border-left: 2px solid var(--border); margin: 5px 0 0 6px; padding: 3px 0 3px 8px; }
+  .subagent .sa-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .subagent .sa-title { color: var(--fg); }
+  .subagent .sa-result { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: pre-wrap; }
+  .subagent .badge { font-size: 10px; padding: 1px 6px; }
   #log { font-size: 12px; color: var(--muted); margin-top: 10px; }
   #log div { padding: 2px 0; border-bottom: 1px solid var(--border); }
   /* Composer */
@@ -350,10 +356,23 @@ function eventLine(type, d) {
   switch (type) {
     case "plan_created": return `${d.revised ? "↻ revised plan" : "🧩 plan"} — ${(d.steps || []).length} step(s)`;
     case "node_started": return `▶ step ${d.step_number} started: ${d.title || ""}`;
-    case "tool": return `⚙ step ${d.step_number}: ${d.tool} → ${(d.result_summary || "").slice(0, 120)}`;
+    case "tool": {
+      const who = d.child_title ? ` (🤖 ${d.child_title})` : "";
+      return `⚙ step ${d.step_number}${who}: ${d.tool} → ${(d.result_summary || "").slice(0, 120)}`;
+    }
     case "node_completed": return `✔ step ${d.step_number} ${d.status}`;
     case "reflection": return `🔎 step ${d.step_number} self-review: ${d.sufficient ? "sufficient" : "gathering more"} — ${d.reason || ""}`;
-    case "evaluator": return `↻ evaluator: ${d.done ? "done" : "needs more"} — ${d.reason || ""}`;
+    case "subagents_spawned": return `🧬 step ${d.step_number}: spawned ${d.count} parallel sub-agent(s)`;
+    case "subagent_started": return `  🤖 step ${d.step_number}: sub-agent "${d.child_title || d.child_index}" started`;
+    case "subagent_completed": return `  🤖 step ${d.step_number}: sub-agent "${d.child_title || d.child_index}" ${d.status}`;
+    case "evaluator": {
+      const parts = [];
+      if ((d.added || []).length) parts.push(`+${d.added.length}`);
+      if ((d.removed || []).length) parts.push(`-${d.removed.length}`);
+      if ((d.repointed || []).length) parts.push(`↺${d.repointed.length}`);
+      const delta = parts.length ? ` [${parts.join(" ")}]` : "";
+      return `↻ evaluator: ${d.done ? "done" : "needs more"}${delta} — ${d.reason || ""}`;
+    }
     case "stopped": return `⏹ ${d.reason || "stopped"}`;
     case "budget_exceeded": return `💰 ${d.reason || "budget reached"}`;
     case "no_progress": return `⚠ ${d.reason || "no progress"}`;
@@ -445,7 +464,7 @@ function addStep(turn, num, title, deps, status, result) {
       <strong>Step ${num}</strong><span class="deps">${title}${depTxt}</span></div>
       <div class="result"></div>`;
     turnGroup(turn).appendChild(el);
-    s = steps[key] = { el, badge: el.querySelector(".badge"), result: el.querySelector(".result") };
+    s = steps[key] = { el, badge: el.querySelector(".badge"), result: el.querySelector(".result"), children: {} };
   }
   if (status) setBadge(turn, num, status);
   if (result) s.result.textContent = result;
@@ -453,6 +472,49 @@ function addStep(turn, num, title, deps, status, result) {
 function setBadge(turn, num, status) {
   const s = steps[stepKey(turn, num)]; if (!s) return;
   s.badge.className = "badge " + status; s.badge.textContent = status;
+}
+// A nested child sub-agent block (spawn_subagents fan-out) under a plan step.
+function childBlock(turn, num, idx, title) {
+  const s = steps[stepKey(turn, num)]; if (!s) return null;
+  let c = s.children[idx];
+  if (!c) {
+    const el = document.createElement("div");
+    el.className = "subagent";
+    el.innerHTML = `<div class="sa-head"><span class="badge running">running</span>
+      <span class="sa-title">🤖 ${title || ("sub-agent " + (idx + 1))}</span></div>
+      <div class="sa-tools"></div><div class="sa-result"></div>`;
+    s.el.appendChild(el);
+    c = s.children[idx] = { el, badge: el.querySelector(".badge"),
+      tools: el.querySelector(".sa-tools"), result: el.querySelector(".sa-result") };
+  }
+  if (title) c.el.querySelector(".sa-title").textContent = "🤖 " + title;
+  return c;
+}
+// Apply a streamed/persisted event to the plan DOM (tool calls + nested child
+// sub-agents). Shared by live streaming and openSession() replay so reopening a
+// session rebuilds the same per-step detail, not just the log lines.
+function replayPlanEvent(type, d) {
+  d = d || {}; const turn = d.turn || 1;
+  if (type === "tool") {
+    const t = document.createElement("div"); t.className = "tool";
+    t.innerHTML = `<code>${d.tool}</code> → ${(d.result_summary || "").slice(0, 140)}`;
+    if (d.child_index !== undefined) {
+      const c = childBlock(turn, d.step_number, d.child_index, d.child_title);
+      if (c) c.tools.appendChild(t);
+    } else {
+      const s = steps[stepKey(turn, d.step_number)];
+      if (s) s.el.appendChild(t);
+    }
+  } else if (type === "subagent_started") {
+    childBlock(turn, d.step_number, d.child_index, d.child_title);
+  } else if (type === "subagent_completed") {
+    const c = childBlock(turn, d.step_number, d.child_index, d.child_title);
+    if (c) {
+      c.badge.className = "badge " + (d.status || "done");
+      c.badge.textContent = d.status || "done";
+      c.result.textContent = (d.result || "").slice(0, 500);
+    }
+  }
 }
 
 // ---- Sessions ----
@@ -494,9 +556,10 @@ async function openSession(id) {
   // Nodes span every turn; render each under its own "Chat N" group.
   clearPlan();
   for (const n of plan) addStep(n.turn, n.step_number, n.title, n.depends_on, n.status, n.result);
-  // Replay the persisted activity trace into the panel (oldest first → newest on top).
+  // Replay the persisted activity trace: rebuild per-step tool calls and nested
+  // child sub-agent blocks in the plan, and log each line (oldest first).
   const evs = (await (await fetch(`/sessions/${id}/events`)).json()).data;
-  for (const e of evs) log(eventLine(e.type, e.data));
+  for (const e of evs) { replayPlanEvent(e.type, e.data); log(eventLine(e.type, e.data)); }
   await loadSessions();
   syncChoice(sessionsById[id]);  // reflect this session's model/thinking
 }
@@ -687,15 +750,14 @@ function handle(ev) {
     case "node_started":
       setBadge(ev.turn || 1, ev.step_number, "running");
       log(`▶ step ${ev.step_number} started`); break;
-    case "tool": {
-      const s = steps[stepKey(ev.turn || 1, ev.step_number)];
-      if (s) {
-        const t = document.createElement("div"); t.className = "tool";
-        t.innerHTML = `<code>${ev.tool}</code> → ${(ev.result_summary || "").slice(0, 140)}`;
-        s.el.appendChild(t);
-      }
-      log(`⚙ step ${ev.step_number}: ${ev.tool}`); break;
-    }
+    case "tool":
+      replayPlanEvent("tool", ev); log(eventLine("tool", ev)); break;
+    case "subagents_spawned":
+      setStatus("fanning out…"); log(eventLine("subagents_spawned", ev)); break;
+    case "subagent_started":
+      replayPlanEvent("subagent_started", ev); log(eventLine("subagent_started", ev)); break;
+    case "subagent_completed":
+      replayPlanEvent("subagent_completed", ev); log(eventLine("subagent_completed", ev)); break;
     case "node_completed": {
       setBadge(ev.turn || 1, ev.step_number, ev.status);
       const s = steps[stepKey(ev.turn || 1, ev.step_number)];

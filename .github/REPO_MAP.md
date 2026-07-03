@@ -119,7 +119,9 @@ flowchart TD
 
 | Feature | How it works |
 | --- | --- |
-| **Multi-agent research** | Planner decomposes → orchestrator runs ready DAG nodes as parallel sub-agents → evaluator replans → answer synthesized and streamed. |
+| **Multi-agent research** | Planner decomposes → orchestrator runs ready DAG nodes as parallel sub-agents → evaluator reshapes the plan (add/drop/reorder/insert) → answer synthesized and streamed. |
+| **Dynamic plan reshaping** | The evaluator can not only append steps but drop pending ones (`remove_step_numbers`) and inject dependency edges into pending steps (`new_dependencies`) to reorder or insert a prerequisite mid-run. Orchestrator `_apply_plan_delta` retires dropped nodes and strips dangling edges so the DAG can't deadlock. |
+| **Recursive sub-agent fan-out** | Any agent can call the `spawn_subagents` tool to split its task into N independent child agents run in parallel (each with the full tool set), bounded by `max_subagent_depth` / `max_spawn_fanout`. Lets decomposition happen at run time, not just in the top-level plan. |
 | **Tool use** | Sub-agents call tools via manual function-calling; the registry exposes ~12 tools (see Concepts). |
 | **Sub-agent self-reflection** | After each pass, a sub-agent critiques its own result ("sufficient, or gather more?") and loops until sufficient or a cap. |
 | **Dynamic robustness** | Per-tool timeouts, per-session circuit breaker for flaky tools, in-session result cache, no-progress guard, refusal detection. |
@@ -150,8 +152,11 @@ flowchart TD
 - **Tools** — self-describing units the model can call. Registry (~12):
   `web_search`, `gemini_search`, `crawl_url`, `browser_use`, `download_file`,
   `parse_document`, `read_artifact`, `bm25_search`, `doc_navigate`,
-  `analyze_image`, `python_exec`, `bash_exec`. Each declares a JSON schema,
-  timeout, and whether it's "breakable" (subject to circuit breaking).
+  `analyze_image`, `python_exec`, `bash_exec`, `spawn_subagents`. Each declares
+  a JSON schema, timeout, and whether it's "breakable" (subject to circuit
+  breaking). `spawn_subagents` fans a task out into parallel child agents and
+  needs a `session_factory` on the `ToolContext` (set for orchestrated
+  sub-agents, absent on the single-turn chat path).
 - **Artifact** — any file in a session (upload, download, or parsed/crawled
   output), referenced by id and surfaced to agents so they can act on it.
 - **PageIndex retrieval** — reasoning-based navigation of a long document via a

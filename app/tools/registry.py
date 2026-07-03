@@ -17,6 +17,7 @@ from app.tools.download_file import download_file_tool
 from app.tools.gemini_search import gemini_search_tool
 from app.tools.parse_document import parse_document_tool, read_artifact_tool
 from app.tools.python_exec import python_exec_tool
+from app.tools.spawn_subagents import spawn_subagents_tool
 from app.tools.web_search import web_search_tool
 
 ALL_TOOLS: list[Tool] = [
@@ -32,6 +33,7 @@ ALL_TOOLS: list[Tool] = [
     analyze_image_tool,
     gemini_search_tool,
     browser_use_tool,
+    spawn_subagents_tool,
 ]
 
 TOOLS_BY_NAME: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}

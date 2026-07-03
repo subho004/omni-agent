@@ -30,6 +30,25 @@ class Plan(BaseModel):
     steps: list[PlanStep]
 
 
+class StepDependency(BaseModel):
+    """An edge injected into an existing pending step's dependencies.
+
+    Lets the evaluator reshape the DAG mid-run — reorder work or make an
+    already-planned step wait on a newly-added prerequisite ("insert a
+    sub-step between 2 and 3") rather than only appending steps at the end.
+    """
+
+    step_number: int = Field(
+        description="An existing PENDING step whose dependencies should change."
+    )
+    add_depends_on: list[int] = Field(
+        description=(
+            "Step numbers this step must now wait for (existing or newly added). "
+            "Merged with its current dependencies."
+        )
+    )
+
+
 class EvalDecision(BaseModel):
     """Evaluator verdict after a round of steps completes."""
 
@@ -39,6 +58,21 @@ class EvalDecision(BaseModel):
     reason: str = Field(description="Brief justification for the decision.")
     new_steps: list[PlanStep] = Field(
         description="Additional steps to run if more work is needed; else empty."
+    )
+    remove_step_numbers: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Step numbers of PENDING steps that are now unnecessary or "
+            "misguided and should be dropped so they never run. Never lists a "
+            "step that already completed. Empty to keep all planned steps."
+        ),
+    )
+    new_dependencies: list[StepDependency] = Field(
+        default_factory=list,
+        description=(
+            "Dependency edges to inject into existing pending steps to reorder "
+            "them or make them wait on a newly-added prerequisite. Empty for none."
+        ),
     )
 
 

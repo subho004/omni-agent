@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # Self-reflection rounds per sub-agent: after producing a result it critiques
     # itself ("is this sufficient? what more can I do?") and keeps gathering.
     subagent_max_reflections: int = 2
+    # Recursive fan-out (spawn_subagents tool): a sub-agent can split its step
+    # into independent child agents that run in parallel. Depth bounds nesting
+    # (orchestrator sub-agents start at depth 1); fanout caps children per call.
+    # Both accept 0 (or any non-positive value) = no limit.
+    max_subagent_depth: int = 3
+    max_spawn_fanout: int = 6
     browser_use_max_steps: int = 24
     llm_max_retries: int = 6
     session_token_budget: int = 0  # 0 = unlimited

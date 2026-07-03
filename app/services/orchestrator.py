@@ -29,6 +29,7 @@ from app.repositories.ledger_repository import LedgerRepository
 from app.repositories.message_repository import MessageRepository
 from app.repositories.plan_node_repository import PlanNodeRepository
 from app.schemas.research import (
+    EvalDecision,
     PlanNodeResponse,
     PlanStep,
     ResearchResponse,
@@ -315,14 +316,25 @@ class OrchestratorService:
             decision, i_tok, o_tok = await self._planner.evaluate(query, digest)
             await self._account(session_id, i_tok, o_tok)
             await run.emit(
-                "evaluator", done=decision.done, reason=decision.reason
+                "evaluator",
+                done=decision.done,
+                reason=decision.reason,
+                added=[s.step_number for s in decision.new_steps],
+                removed=list(decision.remove_step_numbers),
+                repointed=[d.step_number for d in decision.new_dependencies],
             )
-            if decision.done or not decision.new_steps:
+            if decision.done:
                 break
-            await self._persist_steps(session_id, decision.new_steps)
+            changed = await self._apply_plan_delta(session_id, decision)
+            # Evaluator says "not done" but proposes no change to try — further
+            # replanning would repeat itself, so stop and synthesize.
+            if not changed:
+                break
             logger.info(
-                "evaluator added %d step(s): %s",
+                "evaluator reshaped plan (+%d/-%d steps, %d repointed): %s",
                 len(decision.new_steps),
+                len(decision.remove_step_numbers),
+                len(decision.new_dependencies),
                 decision.reason,
             )
 
@@ -511,6 +523,13 @@ class OrchestratorService:
             data_dir=Path(settings.data_dir),
             llm=self._llm,
             ledger=LedgerRepository(db),
+            # Give sub-agents the machinery to fan out into parallel children
+            # (spawn_subagents). depth=1: they are one level below the top plan.
+            session_factory=self._sf,
+            depth=1,
+            # Child agents stream their activity through this node's event sink,
+            # so their tool calls/answers nest under this plan step in the UI.
+            on_event=emit,
         )
         contents = [build_user_content(task)]
         answer = ""
@@ -604,6 +623,62 @@ class OrchestratorService:
             for n in nodes
             if n.result and n.status != "replaced"
         )
+
+    async def _apply_plan_delta(
+        self, session_id: UUID, decision: "EvalDecision"
+    ) -> bool:
+        """Apply an evaluator verdict: add, drop, and repoint plan steps.
+
+        Retires dropped pending steps, injects new dependency edges into
+        pending steps (reorder / insert-a-prerequisite), and strips retired
+        steps from other nodes' deps so the DAG can't deadlock waiting on a
+        step that will never complete. Returns True if anything changed.
+        """
+
+        # Add new steps first so injected dependencies can reference them.
+        await self._persist_steps(session_id, decision.new_steps)
+
+        remove = set(decision.remove_step_numbers)
+        add_deps = {d.step_number: d.add_depends_on for d in decision.new_dependencies}
+        changed = bool(decision.new_steps)
+        if not remove and not add_deps:
+            return changed
+
+        async with self._sf() as db:
+            plans = PlanNodeRepository(db)
+            nodes = await plans.list_by_turn(session_id, self._turn)
+            by_step = {n.step_number: n for n in nodes}
+
+            # Retire dropped PENDING steps — never touch running/done ones.
+            retired: set[int] = set()
+            for step in remove:
+                node = by_step.get(step)
+                if node is not None and node.status == "pending":
+                    await plans.set_status(node.id, "replaced")
+                    retired.add(step)
+
+            # Inject dependency edges into pending steps (excluding self/retired).
+            for step, extra in add_deps.items():
+                node = by_step.get(step)
+                if node is None or node.status != "pending":
+                    continue
+                merged = sorted(
+                    set(node.depends_on)
+                    | {d for d in extra if d != step and d not in retired}
+                )
+                if merged != sorted(node.depends_on):
+                    await plans.set_depends_on(node.id, merged)
+                    changed = True
+
+            # Drop retired steps from any remaining node's dependencies.
+            for node in nodes:
+                if node.step_number in retired or node.status != "pending":
+                    continue
+                cleaned = [d for d in node.depends_on if d not in retired]
+                if len(cleaned) != len(node.depends_on):
+                    await plans.set_depends_on(node.id, cleaned)
+
+        return changed or bool(retired)
 
     async def _persist_steps(
         self, session_id: UUID, steps: list[PlanStep]

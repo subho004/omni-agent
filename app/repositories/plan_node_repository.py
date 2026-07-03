@@ -82,6 +82,14 @@ class PlanNodeRepository:
             node.status = status
             await self._db.commit()
 
+    async def set_depends_on(self, node_id: UUID, depends_on: list[int]) -> None:
+        """Overwrite a node's dependency edges (evaluator DAG reshaping)."""
+
+        node = await self._db.get(PlanNode, node_id)
+        if node is not None:
+            node.depends_on = depends_on
+            await self._db.commit()
+
     async def set_result(self, node_id: UUID, status: str, result: str) -> None:
         node = await self._db.get(PlanNode, node_id)
         if node is not None:
