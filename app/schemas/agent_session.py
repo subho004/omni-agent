@@ -23,6 +23,8 @@ class SessionResponse(BaseModel):
     title: str
     status: str
     tokens_used: int
+    input_tokens_used: int
+    output_tokens_used: int
     model: str
     thinking_level: str
     created_at: datetime

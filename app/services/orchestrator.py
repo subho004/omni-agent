@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import time
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -105,6 +106,7 @@ class OrchestratorService:
         self._sf = session_factory
         self._in_tokens = 0
         self._out_tokens = 0
+        self._started_at = 0.0  # perf_counter at run start; set per research/revise
         self._artifacts_note = ""
         self._history = ""
         # Each user query starts a new research turn; nodes are scoped to it so
@@ -147,6 +149,7 @@ class OrchestratorService:
     ) -> ResearchResponse:
         self._in_tokens = 0
         self._out_tokens = 0
+        self._started_at = time.perf_counter()
         run = run or RunHandle()
 
         async with self._sf() as db:
@@ -203,6 +206,7 @@ class OrchestratorService:
 
         self._in_tokens = 0
         self._out_tokens = 0
+        self._started_at = time.perf_counter()
         run = run or RunHandle()
 
         async with self._sf() as db:
@@ -336,10 +340,12 @@ class OrchestratorService:
         answer = "".join(answer_parts)
         await self._account(session_id, usage.get("in", 0), usage.get("out", 0))
 
+        elapsed_seconds = round(time.perf_counter() - self._started_at, 1)
+
         async with self._sf() as db:
             await MessageRepository(db).create(session_id, "assistant", answer)
             await AgentSessionRepository(db).add_tokens_used(
-                session_id, self._in_tokens + self._out_tokens
+                session_id, self._in_tokens, self._out_tokens
             )
             nodes = await PlanNodeRepository(db).list_by_turn(session_id, self._turn)
 
@@ -349,6 +355,7 @@ class OrchestratorService:
             iterations=iterations,
             input_tokens=self._in_tokens,
             output_tokens=self._out_tokens,
+            elapsed_seconds=elapsed_seconds,
             stopped=stopped,
         )
 
@@ -359,6 +366,7 @@ class OrchestratorService:
             iterations=iterations,
             input_tokens=self._in_tokens,
             output_tokens=self._out_tokens,
+            elapsed_seconds=elapsed_seconds,
         )
 
     async def _first_user_query(self, db: object, session_id: UUID) -> str:

@@ -116,6 +116,14 @@ def _apply_lightweight_migrations(conn: object) -> None:
                     f"VARCHAR(16) NOT NULL DEFAULT '{DEFAULT_THINKING_LEVEL}'"
                 )
             )
+        for col in ("input_tokens_used", "output_tokens_used"):
+            if col not in columns:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE agent_sessions ADD COLUMN {col} "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:

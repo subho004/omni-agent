@@ -225,6 +225,18 @@ function log(msg) {
   const d = document.createElement("div"); d.textContent = msg;
   $("log").prepend(d);
 }
+// 1234 → "1.2k"; keeps small counts exact.
+function fmtTokens(n) {
+  n = n || 0;
+  return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
+}
+// Seconds → "1m 05s" / "42.3s".
+function fmtDuration(sec) {
+  if (sec == null) return "—";
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return `${m}m ${String(s).padStart(2, "0")}s`;
+}
 function scrollThread() { $("convo").scrollTop = $("convo").scrollHeight; }
 
 // Render a persisted/streamed event as a one-line activity string.
@@ -347,7 +359,7 @@ async function loadSessions() {
     sessionsById[s.id] = s;
     const el = document.createElement("div");
     el.className = "sess" + (s.id === sessionId ? " active" : "");
-    el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${new Date(s.created_at).toLocaleString()} · ${s.tokens_used} tok</small></div>
+    el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${new Date(s.created_at).toLocaleString()}</small><small>tokens in/out: ${fmtTokens(s.input_tokens_used)}/${fmtTokens(s.output_tokens_used)}</small></div>
       <button class="sess-del" title="Delete chat">🗑</button>`;
     el.querySelector(".sess-main").onclick = () => openSession(s.id);
     el.querySelector(".sess-del").onclick = (e) => { e.stopPropagation(); deleteSession(s.id, s.title); };
@@ -596,7 +608,7 @@ function handle(ev) {
       renderMarkdown(body, ev.answer);
       renderMermaid(body);  // diagrams only render once the full answer is in
       const st = document.createElement("div"); st.className = "stats";
-      st.textContent = `iterations: ${ev.iterations} · tokens in/out: ${ev.input_tokens}/${ev.output_tokens}`;
+      st.textContent = `time: ${fmtDuration(ev.elapsed_seconds)} · iterations: ${ev.iterations} · tokens in/out: ${ev.input_tokens}/${ev.output_tokens}`;
       b.appendChild(st); streamBubble = null; scrollThread(); break;
     }
     case "error":

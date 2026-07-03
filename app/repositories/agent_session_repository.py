@@ -67,10 +67,14 @@ class AgentSessionRepository:
         )
         return list(rows.scalars().all()), total
 
-    async def add_tokens_used(self, session_id: UUID, tokens: int) -> None:
+    async def add_tokens_used(
+        self, session_id: UUID, input_tokens: int, output_tokens: int
+    ) -> None:
         session = await self._db.get(AgentSession, session_id)
         if session is not None:
-            session.tokens_used += tokens
+            session.input_tokens_used += input_tokens
+            session.output_tokens_used += output_tokens
+            session.tokens_used += input_tokens + output_tokens
             await self._db.commit()
 
     async def delete(self, session_id: UUID) -> bool:

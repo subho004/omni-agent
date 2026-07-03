@@ -19,6 +19,9 @@ class AgentSession(Base):
     title: Mapped[str] = mapped_column(String(255), default="New session")
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     tokens_used: Mapped[int] = mapped_column(default=0)
+    # Cumulative prompt/completion token split (total is `tokens_used`).
+    input_tokens_used: Mapped[int] = mapped_column(default=0)
+    output_tokens_used: Mapped[int] = mapped_column(default=0)
     # Per-session model choice + reasoning depth (user-selectable in the UI).
     model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
     thinking_level: Mapped[str] = mapped_column(

@@ -111,3 +111,4 @@ class ResearchResponse(BaseModel):
     iterations: int
     input_tokens: int
     output_tokens: int
+    elapsed_seconds: float

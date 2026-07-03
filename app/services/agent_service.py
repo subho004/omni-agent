@@ -103,7 +103,7 @@ class AgentService:
 
         await self._messages.create(session_id, "assistant", result.answer)
         await self._sessions.add_tokens_used(
-            session_id, result.input_tokens + result.output_tokens
+            session_id, result.input_tokens, result.output_tokens
         )
 
         return ChatResponse(
