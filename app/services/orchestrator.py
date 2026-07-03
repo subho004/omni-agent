@@ -45,8 +45,6 @@ from app.services.llm_client import LlmClient
 from app.services.planner import PlannerService
 from app.tools.base import ToolContext
 
-_RESULT_PREVIEW_CHARS = 4000
-
 # Phrases that signal a sub-agent gave up rather than produced the data.
 _REFUSAL_MARKERS = (
     "unable to",
@@ -176,6 +174,7 @@ class OrchestratorService:
         logger.info("planned %d step(s) for session %s", len(plan.steps), session_id)
         await run.emit(
             "plan_created",
+            turn=self._turn,
             steps=[
                 {
                     "step_number": s.step_number,
@@ -242,6 +241,7 @@ class OrchestratorService:
         await self._persist_steps(session_id, revised.new_steps)
         await run.emit(
             "plan_created",
+            turn=self._turn,
             steps=[
                 {
                     "step_number": s.step_number,
@@ -426,7 +426,10 @@ class OrchestratorService:
             await plans.set_status(node_id, "running")
             dep_results = await self._dependency_digest(db, session_id, node)
         await run.emit(
-            "node_started", step_number=node.step_number, title=node.title
+            "node_started",
+            turn=self._turn,
+            step_number=node.step_number,
+            title=node.title,
         )
 
         # Shared session context first (prior conversation + files), then the
@@ -445,7 +448,9 @@ class OrchestratorService:
         task = "\n\n".join(task_parts)
 
         async def node_event(event_type: str, data: dict[str, object]) -> None:
-            await run.emit(event_type, step_number=node.step_number, **data)
+            await run.emit(
+                event_type, turn=self._turn, step_number=node.step_number, **data
+            )
 
         async with self._sf() as db:
             answer, status = "", "failed"
@@ -460,10 +465,11 @@ class OrchestratorService:
 
         await run.emit(
             "node_completed",
+            turn=self._turn,
             step_number=node.step_number,
             title=node.title,
             status=status,
-            result=answer[:_RESULT_PREVIEW_CHARS],
+            result=answer,
         )
 
     async def _run_subagent_with_reflection(
@@ -642,6 +648,7 @@ class OrchestratorService:
 
 def _to_node_response(node: PlanNode) -> PlanNodeResponse:
     return PlanNodeResponse(
+        turn=node.turn,
         step_number=node.step_number,
         title=node.title,
         description=node.description,

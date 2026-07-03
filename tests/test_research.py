@@ -186,11 +186,12 @@ async def test_followup_turn_runs_its_own_plan(
     # The follow-up dispatched at least one more sub-agent (it actually ran).
     assert len(fake_orch_llm.subagent_tasks) > ran_after_first
 
-    # The plan endpoint shows only the latest turn, and it executed.
+    # The plan endpoint returns every turn (full traceability), all executed.
     plan = (await client.get(f"/sessions/{session_id}/plan")).json()["data"]
     assert plan and all(n["status"] == "done" for n in plan)
+    assert {n["turn"] for n in plan} == {1, 2}  # both turns are present
     # Step numbers restart per turn (no collision with turn 1's numbering).
-    assert plan[0]["step_number"] == 1
+    assert plan[0]["turn"] == 1 and plan[0]["step_number"] == 1
 
 
 @pytest.mark.asyncio

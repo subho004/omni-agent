@@ -306,10 +306,10 @@ async def get_plan(
     db: AsyncSession = Depends(get_db_session),
 ) -> JSONResponse:
     plans = PlanNodeRepository(db)
-    latest = await plans.latest_turn(session_id)
-    # Show only the latest turn's plan; step numbers restart per turn, so
-    # merging turns would collide. Prior turns live in the message history.
-    nodes = await plans.list_by_turn(session_id, latest) if latest else []
+    # Return every turn's plan (ordered by turn, then step) for full
+    # traceability across a multi-turn session. Step numbers restart per turn,
+    # so each node carries its `turn` and the client groups by it.
+    nodes = await plans.list_by_session(session_id)
     return success_response(
         data=[_to_node_response(n) for n in nodes], message="Plan retrieved"
     )

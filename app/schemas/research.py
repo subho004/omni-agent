@@ -89,6 +89,7 @@ class ReviseRequest(BaseModel):
 
 
 class PlanNodeResponse(BaseModel):
+    turn: int
     step_number: int
     title: str
     description: str

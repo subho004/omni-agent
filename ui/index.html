@@ -76,6 +76,10 @@
   .bubble .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
   .stats { color: var(--muted); font-size: 12px; margin-top: 4px; }
   /* Plan */
+  .turn-group { margin-bottom: 14px; }
+  .turn-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--accent); font-weight: 600; margin: 4px 0 6px; padding-bottom: 3px;
+    border-bottom: 1px solid var(--border); }
   .step { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
     margin-bottom: 8px; }
   .step .head { display: flex; align-items: center; gap: 8px; }
@@ -182,7 +186,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const steps = {};
+const steps = {};        // "turn:step" -> {el, badge, result}
+const turnGroups = {};   // turn -> group container element
 let sessionId = null;
 let streamBubble = null;  // live assistant bubble being streamed into
 let modelDefaults = { default_model: null, default_thinking_level: null };
@@ -290,12 +295,31 @@ function addBubble(who, text, cls, asMarkdown) {
 }
 
 // ---- Plan rendering ----
-function renderPlan(list, append) {
-  if (!append) { $("plan").innerHTML = ""; for (const k in steps) delete steps[k]; }
-  for (const s of list) addStep(s.step_number, s.title, s.depends_on, s.status, s.result);
+const stepKey = (turn, num) => `${turn}:${num}`;
+function clearPlan() {
+  $("plan").innerHTML = "";
+  for (const k in steps) delete steps[k];
+  for (const k in turnGroups) delete turnGroups[k];
 }
-function addStep(num, title, deps, status, result) {
-  let s = steps[num];
+// One collapsible group per turn (each user query = a new turn/chat).
+function turnGroup(turn) {
+  let g = turnGroups[turn];
+  if (!g) {
+    g = document.createElement("div");
+    g.className = "turn-group";
+    g.innerHTML = `<div class="turn-label">Chat ${turn}</div>`;
+    $("plan").appendChild(g);
+    turnGroups[turn] = g;
+  }
+  return g;
+}
+function renderPlan(list, turn, append) {
+  if (!append) clearPlan();
+  for (const s of list) addStep(turn, s.step_number, s.title, s.depends_on, s.status, s.result);
+}
+function addStep(turn, num, title, deps, status, result) {
+  const key = stepKey(turn, num);
+  let s = steps[key];
   if (!s) {
     const el = document.createElement("div");
     el.className = "step";
@@ -303,14 +327,14 @@ function addStep(num, title, deps, status, result) {
     el.innerHTML = `<div class="head"><span class="badge">pending</span>
       <strong>Step ${num}</strong><span class="deps">${title}${depTxt}</span></div>
       <div class="result"></div>`;
-    $("plan").appendChild(el);
-    s = steps[num] = { el, badge: el.querySelector(".badge"), result: el.querySelector(".result") };
+    turnGroup(turn).appendChild(el);
+    s = steps[key] = { el, badge: el.querySelector(".badge"), result: el.querySelector(".result") };
   }
-  if (status) setBadge(num, status);
+  if (status) setBadge(turn, num, status);
   if (result) s.result.textContent = result;
 }
-function setBadge(num, status) {
-  const s = steps[num]; if (!s) return;
+function setBadge(turn, num, status) {
+  const s = steps[stepKey(turn, num)]; if (!s) return;
   s.badge.className = "badge " + status; s.badge.textContent = status;
 }
 
@@ -333,8 +357,7 @@ async function loadSessions() {
 
 async function openSession(id) {
   sessionId = id;
-  $("thread").innerHTML = ""; $("plan").innerHTML = ""; $("log").innerHTML = "";
-  for (const k in steps) delete steps[k];
+  $("thread").innerHTML = ""; $("log").innerHTML = ""; clearPlan();
   setStatus("loaded");
   const msgs = (await (await fetch(`/sessions/${id}/messages?page_size=200`)).json()).data.items;
   for (const m of msgs) {
@@ -348,7 +371,9 @@ async function openSession(id) {
     log(`📎 ${uploads.length} attached file(s): ${names}`);
   }
   const plan = (await (await fetch(`/sessions/${id}/plan`)).json()).data;
-  if (plan.length) renderPlan(plan, false);
+  // Nodes span every turn; render each under its own "Chat N" group.
+  clearPlan();
+  for (const n of plan) addStep(n.turn, n.step_number, n.title, n.depends_on, n.status, n.result);
   // Replay the persisted activity trace into the panel (oldest first → newest on top).
   const evs = (await (await fetch(`/sessions/${id}/events`)).json()).data;
   for (const e of evs) log(eventLine(e.type, e.data));
@@ -412,9 +437,11 @@ async function exportChat(detailed) {
     const plan = (await (await fetch(`/sessions/${sessionId}/plan`)).json()).data;
     if (plan.length) {
       out.push("---", "", "## 🧩 Research plan & steps", "");
+      let curTurn = null;
       for (const n of plan) {
+        if (n.turn !== curTurn) { curTurn = n.turn; out.push(`### Chat ${curTurn}`, ""); }
         const deps = n.depends_on && n.depends_on.length ? ` · depends on ${n.depends_on.join(", ")}` : "";
-        out.push(`### Step ${n.step_number}: ${n.title} — _${n.status}_${deps}`, "");
+        out.push(`#### Step ${n.step_number}: ${n.title} — _${n.status}_${deps}`, "");
         if (n.description) out.push(`> ${n.description}`, "");
         if (n.result) out.push(n.result, "");
       }
@@ -440,8 +467,7 @@ async function deleteSession(id, title) {
 
 async function newChat() {
   sessionId = null;
-  $("thread").innerHTML = ""; $("plan").innerHTML = ""; $("log").innerHTML = "";
-  for (const k in steps) delete steps[k];
+  $("thread").innerHTML = ""; $("log").innerHTML = ""; clearPlan();
   setStatus("new");
   await loadSessions();
   $("q").focus();
@@ -507,9 +533,9 @@ async function run() {
   const query = $("q").value.trim();
   if (!query) return;
   $("q").value = ""; autoGrow();
-  // Fresh plan/activity for this turn; conversation thread persists.
-  $("plan").innerHTML = ""; $("log").innerHTML = "";
-  for (const k in steps) delete steps[k];
+  // Keep prior turns' plan & activity for full traceability — this turn appends
+  // its own "Chat N" plan group; a divider marks the new turn in the log.
+  if ($("log").childNodes.length) log("──────── new query ────────");
   streamBubble = null;
   addBubble("You", query, "user");
   setStatus("planning…");
@@ -523,14 +549,16 @@ function handle(ev) {
   switch (ev.type) {
     case "plan_created":
       setStatus("executing…");
-      renderPlan(ev.steps, !!ev.revised);
+      // Upsert into this turn's group (never clears prior turns); a revision
+      // adds its new steps alongside the kept ones already shown.
+      renderPlan(ev.steps, ev.turn || 1, true);
       if (ev.revised) log(`↻ revised — kept: ${(ev.kept || []).join(", ") || "none"}`);
       break;
     case "node_started":
-      setBadge(ev.step_number, "running");
+      setBadge(ev.turn || 1, ev.step_number, "running");
       log(`▶ step ${ev.step_number} started`); break;
     case "tool": {
-      const s = steps[ev.step_number];
+      const s = steps[stepKey(ev.turn || 1, ev.step_number)];
       if (s) {
         const t = document.createElement("div"); t.className = "tool";
         t.innerHTML = `<code>${ev.tool}</code> → ${(ev.result_summary || "").slice(0, 140)}`;
@@ -538,10 +566,12 @@ function handle(ev) {
       }
       log(`⚙ step ${ev.step_number}: ${ev.tool}`); break;
     }
-    case "node_completed":
-      setBadge(ev.step_number, ev.status);
-      if (steps[ev.step_number]) steps[ev.step_number].result.textContent = ev.result || "";
+    case "node_completed": {
+      setBadge(ev.turn || 1, ev.step_number, ev.status);
+      const s = steps[stepKey(ev.turn || 1, ev.step_number)];
+      if (s) s.result.textContent = ev.result || "";
       log(`✔ step ${ev.step_number} ${ev.status}`); break;
+    }
     case "reflection":
       log(`🔎 step ${ev.step_number} self-review: ${ev.sufficient ? "sufficient" : "gathering more"} — ${ev.reason}`); break;
     case "evaluator":
