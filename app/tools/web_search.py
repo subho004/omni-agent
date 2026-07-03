@@ -14,6 +14,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.tools.base import Tool, ToolContext
 
@@ -38,9 +39,9 @@ def _is_transient(exc: BaseException) -> bool:
     return isinstance(exc, DDGSException) and not _is_no_results(exc)
 
 
-def _search_sync(query: str, max_results: int) -> list[dict[str, str]]:
+def _search_sync(query: str, max_results: int, region: str) -> list[dict[str, str]]:
     with DDGS() as ddgs:
-        rows = ddgs.text(query, max_results=max_results)
+        rows = ddgs.text(query, max_results=max_results, region=region)
     return [
         {
             "title": r.get("title", ""),
@@ -51,7 +52,9 @@ def _search_sync(query: str, max_results: int) -> list[dict[str, str]]:
     ]
 
 
-def _search_with_retry(query: str, max_results: int) -> list[dict[str, str]]:
+def _search_with_retry(
+    query: str, max_results: int, region: str
+) -> list[dict[str, str]]:
     """Search with exponential backoff on transient backend failures.
 
     A genuinely empty result set (or exhausted retries) returns ``[]`` rather
@@ -67,7 +70,7 @@ def _search_with_retry(query: str, max_results: int) -> list[dict[str, str]]:
             reraise=True,
         ):
             with attempt:
-                return _search_sync(query, max_results)
+                return _search_sync(query, max_results, region)
     except DDGSException as exc:
         logger.info("web_search: no usable results for %s (%s)", query, exc)
     return []
@@ -76,8 +79,9 @@ def _search_with_retry(query: str, max_results: int) -> list[dict[str, str]]:
 async def _handle(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args["query"])
     max_results = min(int(args.get("max_results", DEFAULT_RESULTS)), MAX_RESULTS_CAP)
-    logger.info("web_search: %s", query)
-    results = await asyncio.to_thread(_search_with_retry, query, max_results)
+    region = str(args.get("region") or settings.search_region)
+    logger.info("web_search: %s [region=%s]", query, region)
+    results = await asyncio.to_thread(_search_with_retry, query, max_results, region)
     return {"results": results, "count": len(results)}
 
 
@@ -95,6 +99,16 @@ web_search_tool = Tool(
             "max_results": {
                 "type": "integer",
                 "description": "Number of results to return (default 10, max 25).",
+            },
+            "region": {
+                "type": "string",
+                "description": (
+                    "Optional ddgs region code to localize results, e.g. "
+                    "'wt-wt' (worldwide, default), 'in-en' (India), 'uk-en', "
+                    "'us-en'. Set this to match the query's country/locale when "
+                    "the topic is region-specific (e.g. an Indian company or "
+                    "regulator); otherwise omit for unbiased worldwide results."
+                ),
             },
         },
         "required": ["query"],

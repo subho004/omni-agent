@@ -1,4 +1,4 @@
-# Agentic Research Harness
+# Omni-Agent
 
 A Claude-Code-style research backend: it answers a question by **planning,
 running tools, and self-correcting in a loop** — decomposing work into a plan,

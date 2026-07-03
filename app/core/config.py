@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "YOUR Backend"
+    app_name: str = "Omni-Agent"
     env: str = "development"
     debug: bool = False
     # Level for noisy third-party libraries (browser_use, crawl4ai, …).
@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     doc_section_chars: int = 24000  # doc_navigate per-section text
     history_max_turns: int = 24  # conversation turns fed back into planning
     history_turn_chars: int = 8000  # per-turn char cap in the history digest
+    # Web search: ddgs region (e.g. wt-wt worldwide, us-en, uk-en, in-en). The
+    # default is worldwide/no-country-bias; the model may override per query.
+    search_region: str = "wt-wt"
     # Robustness
     tool_default_timeout: float = 360.0  # seconds; per-tool overrides on Tool
     circuit_trip_threshold: int = 3  # tool failures before it's disabled/session
