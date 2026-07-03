@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Research Harness</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #e6e9ef;
+    --muted: #8b93a7; --accent: #5b9dff; --ok: #3fb950; --run: #d29922;
+    --fail: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, system-ui, sans-serif;
+    display: grid; grid-template-columns: 240px 1fr; height: 100vh;
+  }
+  /* Sidebar */
+  aside {
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  aside .top { padding: 12px; border-bottom: 1px solid var(--border); }
+  aside h1 { font-size: 14px; margin: 0 0 10px; }
+  #new { width: 100%; }
+  #sessions { overflow-y: auto; flex: 1; padding: 6px; }
+  .sess {
+    display: flex; align-items: center; gap: 4px;
+    padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text);
+  }
+  .sess:hover { background: #1e222b; }
+  .sess.active { background: #232a37; }
+  .sess-main {
+    flex: 1; min-width: 0; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sess small { display: block; color: var(--muted); font-size: 11px; }
+  .sess-del {
+    background: transparent; border: 0; padding: 2px 4px; font-size: 13px;
+    cursor: pointer; opacity: 0; flex-shrink: 0; border-radius: 6px;
+  }
+  .sess:hover .sess-del { opacity: .6; }
+  .sess-del:hover { opacity: 1; background: rgba(248,81,73,.15); }
+  /* Main */
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  header { padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .hdr-title { color: var(--muted); font-size: 12px; }
+  .modelbar { display: flex; gap: 10px; align-items: center; }
+  .modelbar label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; display: flex; align-items: center; gap: 5px; }
+  .modelbar select { background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px;
+    font-size: 12px; text-transform: none; letter-spacing: normal; }
+  .modelbar .mini { background: #2a2f3a; color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px; padding: 5px 9px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    text-transform: none; letter-spacing: normal; }
+  .modelbar .mini:hover { background: #333a48; }
+  .cols { display: grid; grid-template-columns: 1fr 380px; gap: 14px;
+    padding: 14px 16px; overflow: hidden; flex: 1; min-height: 0; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; overflow-y: auto; min-height: 0; }
+  .panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); }
+  /* Conversation */
+  .bubble { border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+    white-space: pre-wrap; }
+  .bubble.user { background: #1d2634; border: 1px solid #2b3346; }
+  .bubble.assistant { background: #14171d; border: 1px solid var(--border); }
+  .bubble .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .stats { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  /* Plan */
+  .step { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+    margin-bottom: 8px; }
+  .step .head { display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px;
+    background: #2a2f3a; color: var(--muted); }
+  .badge.running { background: rgba(210,153,34,.15); color: var(--run); }
+  .badge.done { background: rgba(63,185,80,.15); color: var(--ok); }
+  .badge.failed, .badge.replaced { background: rgba(248,81,73,.12); color: var(--fail); }
+  .step .deps { color: var(--muted); font-size: 11px; }
+  .step .result { margin-top: 6px; color: var(--muted); font-size: 12px;
+    white-space: pre-wrap; max-height: 240px; overflow-y: auto; }
+  /* Collapsible section headers */
+  .toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+  .toggle .caret { transition: transform .15s; display: inline-block; }
+  .toggle.closed .caret { transform: rotate(-90deg); }
+  .collapsed { display: none !important; }
+  /* Markdown-rendered assistant answers */
+  .md { white-space: normal; }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md h1, .md h2, .md h3, .md h4 { margin: .7em 0 .35em; line-height: 1.25;
+    color: var(--text); text-transform: none; letter-spacing: normal; }
+  .md h1 { font-size: 1.4em; } .md h2 { font-size: 1.2em; }
+  .md h3 { font-size: 1.05em; } .md h4 { font-size: 1em; }
+  .md p { margin: .5em 0; }
+  .md ul, .md ol { margin: .4em 0; padding-left: 1.4em; }
+  .md li { margin: .2em 0; }
+  .md code { background: #0d1117; border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px; font-size: .9em; color: #e6c07b; }
+  .md pre { background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .md pre code { background: none; border: 0; padding: 0; color: var(--text); }
+  .md table { border-collapse: collapse; margin: .6em 0; width: 100%; font-size: .92em; }
+  .md th, .md td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; }
+  .md th { background: #1c212b; }
+  .md blockquote { border-left: 3px solid var(--border); margin: .5em 0;
+    padding: .2em .8em; color: var(--muted); }
+  .md a { color: var(--accent); }
+  .md img { max-width: 100%; }
+  .md .mermaid { background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; margin: .6em 0; text-align: center; }
+  .md hr { border: 0; border-top: 1px solid var(--border); margin: .8em 0; }
+  .tool { font-size: 12px; color: var(--muted); margin: 3px 0 0 4px; }
+  .tool code { color: var(--accent); }
+  #log { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  #log div { padding: 2px 0; border-bottom: 1px solid var(--border); }
+  /* Composer */
+  .bar { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border);
+    align-items: flex-end; }
+  .bar textarea {
+    flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px;
+    font-family: inherit; line-height: 1.4; resize: none; overflow-y: auto;
+    max-height: 200px; min-height: 42px;
+  }
+  button { background: var(--accent); color: #fff; border: 0; padding: 10px 16px;
+    border-radius: 8px; cursor: pointer; font-weight: 600; }
+  button.secondary { background: #2a2f3a; }
+  button:disabled { opacity: .5; cursor: default; }
+  .attach { display: flex; align-items: center; justify-content: center;
+    width: 40px; min-height: 42px; border: 1px solid var(--border); border-radius: 8px;
+    cursor: pointer; font-size: 18px; user-select: none; background: var(--panel); }
+  .attach:hover { background: #1e222b; }
+  .attach.busy { opacity: .5; pointer-events: none; }
+</style>
+</head>
+<body>
+<aside>
+  <div class="top">
+    <h1>Research Harness</h1>
+    <button id="new">＋ New chat</button>
+  </div>
+  <div id="sessions"></div>
+</aside>
+
+<main>
+  <header>
+    <span class="hdr-title">Session <span id="status">— none —</span></span>
+    <span class="modelbar">
+      <label>Model <select id="model" title="Model for this session"></select></label>
+      <label>Thinking <select id="thinking" title="Reasoning depth"></select></label>
+      <button id="exportMd" class="mini" title="Export conversation (request + response) as Markdown">↓ MD</button>
+      <button id="exportFull" class="mini" title="Export full run — request, steps, activity, then response">↓ Full</button>
+    </span>
+  </header>
+  <div class="cols">
+    <section class="panel" id="convo"><h2>Conversation</h2><div id="thread"></div></section>
+    <section class="panel">
+      <h2 class="toggle" data-target="plan"><span class="caret">▾</span>Plan</h2><div id="plan"></div>
+      <h2 class="toggle" data-target="log" style="margin-top:12px"><span class="caret">▾</span>Activity</h2><div id="log"></div>
+    </section>
+  </div>
+  <div class="bar">
+    <label class="attach" id="attach" title="Attach files or images (PDF, DOCX, TXT, PNG…)">📎
+      <input id="file" type="file" multiple hidden
+        accept=".pdf,.docx,.doc,.txt,.md,.csv,.json,.html,image/*" />
+    </label>
+    <textarea id="q" rows="1"
+      placeholder="Ask a research question, or attach a file and ask about it…  (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button id="run">Send</button>
+    <button id="stop" class="secondary" disabled>Stop</button>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const steps = {};
+let sessionId = null;
+let streamBubble = null;  // live assistant bubble being streamed into
+let modelDefaults = { default_model: null, default_thinking_level: null };
+const sessionsById = {};  // id -> session record (for model/thinking sync)
+
+// Populate the model + thinking dropdowns from the backend catalogue.
+async function loadModelOptions() {
+  try {
+    const data = (await (await fetch("/sessions/options/models")).json()).data;
+    modelDefaults = data;
+    $("model").innerHTML = data.models
+      .map((m) => {
+        const ctx = m.context_window_tokens
+          ? ` · ${Math.round(m.context_window_tokens / 1000)}k ctx` : "";
+        return `<option value="${m.id}">${m.label}${ctx}</option>`;
+      }).join("");
+    $("thinking").innerHTML = data.thinking_levels
+      .map((t) => `<option value="${t}">${t}</option>`).join("");
+    $("model").value = data.default_model;
+    $("thinking").value = data.default_thinking_level;
+  } catch (e) { /* backend not ready; dropdowns stay empty */ }
+}
+
+function currentChoice() {
+  return { model: $("model").value || undefined,
+           thinking_level: $("thinking").value || undefined };
+}
+function syncChoice(sess) {
+  if (sess && sess.model) $("model").value = sess.model;
+  if (sess && sess.thinking_level) $("thinking").value = sess.thinking_level;
+}
+
+function setStatus(t) { $("status").textContent = t; }
+function log(msg) {
+  const d = document.createElement("div"); d.textContent = msg;
+  $("log").prepend(d);
+}
+function scrollThread() { $("convo").scrollTop = $("convo").scrollHeight; }
+
+// Render a persisted/streamed event as a one-line activity string.
+function eventLine(type, d) {
+  d = d || {};
+  switch (type) {
+    case "plan_created": return `${d.revised ? "↻ revised plan" : "🧩 plan"} — ${(d.steps || []).length} step(s)`;
+    case "node_started": return `▶ step ${d.step_number} started: ${d.title || ""}`;
+    case "tool": return `⚙ step ${d.step_number}: ${d.tool} → ${(d.result_summary || "").slice(0, 120)}`;
+    case "node_completed": return `✔ step ${d.step_number} ${d.status}`;
+    case "reflection": return `🔎 step ${d.step_number} self-review: ${d.sufficient ? "sufficient" : "gathering more"} — ${d.reason || ""}`;
+    case "evaluator": return `↻ evaluator: ${d.done ? "done" : "needs more"} — ${d.reason || ""}`;
+    case "stopped": return `⏹ ${d.reason || "stopped"}`;
+    case "budget_exceeded": return `💰 ${d.reason || "budget reached"}`;
+    case "no_progress": return `⚠ ${d.reason || "no progress"}`;
+    case "error": return `❌ ${d.message || "error"}`;
+    default: return type;
+  }
+}
+
+if (window.marked) marked.setOptions({ gfm: true, breaks: true });
+if (window.mermaid) mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+
+// Render markdown (sanitized) into an element; falls back to plain text.
+function renderMarkdown(el, raw) {
+  if (window.marked) {
+    let html = marked.parse(raw || "");
+    if (window.DOMPurify) html = DOMPurify.sanitize(html);
+    el.innerHTML = html;
+    el.classList.add("md");
+  } else {
+    el.textContent = raw || "";
+  }
+}
+
+// Turn ```mermaid code blocks into rendered diagrams (call once, on completion).
+let _mermaidSeq = 0;
+async function renderMermaid(el) {
+  if (!window.mermaid) return;
+  const blocks = el.querySelectorAll("code.language-mermaid");
+  for (const code of blocks) {
+    const div = document.createElement("div");
+    div.className = "mermaid";
+    div.textContent = code.textContent;
+    (code.closest("pre") || code).replaceWith(div);
+  }
+  const nodes = el.querySelectorAll(".mermaid:not([data-processed])");
+  if (nodes.length) {
+    try { await mermaid.run({ nodes }); } catch (e) { /* leave source visible */ }
+  }
+}
+
+function bubbleBody(b) { return b.querySelector(".body"); }
+
+function addBubble(who, text, cls, asMarkdown) {
+  const b = document.createElement("div");
+  b.className = "bubble " + cls;
+  const head = document.createElement("div");
+  head.className = "who"; head.textContent = who;
+  const body = document.createElement("div");
+  body.className = "body";
+  if (asMarkdown) { renderMarkdown(body, text); renderMermaid(body); }
+  else body.textContent = text;
+  b.appendChild(head); b.appendChild(body);
+  $("thread").appendChild(b);
+  scrollThread();
+  return b;
+}
+
+// ---- Plan rendering ----
+function renderPlan(list, append) {
+  if (!append) { $("plan").innerHTML = ""; for (const k in steps) delete steps[k]; }
+  for (const s of list) addStep(s.step_number, s.title, s.depends_on, s.status, s.result);
+}
+function addStep(num, title, deps, status, result) {
+  let s = steps[num];
+  if (!s) {
+    const el = document.createElement("div");
+    el.className = "step";
+    const depTxt = deps && deps.length ? ` · needs ${deps.join(", ")}` : "";
+    el.innerHTML = `<div class="head"><span class="badge">pending</span>
+      <strong>Step ${num}</strong><span class="deps">${title}${depTxt}</span></div>
+      <div class="result"></div>`;
+    $("plan").appendChild(el);
+    s = steps[num] = { el, badge: el.querySelector(".badge"), result: el.querySelector(".result") };
+  }
+  if (status) setBadge(num, status);
+  if (result) s.result.textContent = result;
+}
+function setBadge(num, status) {
+  const s = steps[num]; if (!s) return;
+  s.badge.className = "badge " + status; s.badge.textContent = status;
+}
+
+// ---- Sessions ----
+async function loadSessions() {
+  const r = await fetch("/sessions?page_size=100");
+  const data = (await r.json()).data;
+  $("sessions").innerHTML = "";
+  for (const s of data.items) {
+    sessionsById[s.id] = s;
+    const el = document.createElement("div");
+    el.className = "sess" + (s.id === sessionId ? " active" : "");
+    el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${new Date(s.created_at).toLocaleString()} · ${s.tokens_used} tok</small></div>
+      <button class="sess-del" title="Delete chat">🗑</button>`;
+    el.querySelector(".sess-main").onclick = () => openSession(s.id);
+    el.querySelector(".sess-del").onclick = (e) => { e.stopPropagation(); deleteSession(s.id, s.title); };
+    $("sessions").appendChild(el);
+  }
+}
+
+async function openSession(id) {
+  sessionId = id;
+  $("thread").innerHTML = ""; $("plan").innerHTML = ""; $("log").innerHTML = "";
+  for (const k in steps) delete steps[k];
+  setStatus("loaded");
+  const msgs = (await (await fetch(`/sessions/${id}/messages?page_size=200`)).json()).data.items;
+  for (const m of msgs) {
+    if (m.role === "user") addBubble("You", m.content.replace(/^\[revise\] /, "↻ "), "user");
+    else if (m.role === "assistant") addBubble("Assistant", m.content, "assistant", true);
+  }
+  const arts = (await (await fetch(`/sessions/${id}/artifacts`)).json()).data;
+  const uploads = arts.filter((a) => a.kind === "upload");
+  if (uploads.length) {
+    const names = uploads.map((a) => a.name).join(", ");
+    log(`📎 ${uploads.length} attached file(s): ${names}`);
+  }
+  const plan = (await (await fetch(`/sessions/${id}/plan`)).json()).data;
+  if (plan.length) renderPlan(plan, false);
+  // Replay the persisted activity trace into the panel (oldest first → newest on top).
+  const evs = (await (await fetch(`/sessions/${id}/events`)).json()).data;
+  for (const e of evs) log(eventLine(e.type, e.data));
+  await loadSessions();
+  syncChoice(sessionsById[id]);  // reflect this session's model/thinking
+}
+
+// ---- Export ----
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function slug(s) { return (s || "chat").replace(/[^\w]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "chat"; }
+
+// Page through every message so exports aren't capped at one page (le=200 on the API).
+async function fetchAllMessages(id) {
+  const pageSize = 200;
+  const all = [];
+  for (let page = 1; ; page++) {
+    const { items } = (await (await fetch(
+      `/sessions/${id}/messages?page=${page}&page_size=${pageSize}`)).json()).data;
+    all.push(...items);
+    if (items.length < pageSize) break;
+  }
+  return all;
+}
+
+async function exportChat(detailed) {
+  if (!sessionId) { alert("Open or start a chat first."); return; }
+  const sess = sessionsById[sessionId] || {};
+  const title = sess.title || "Chat";
+  const msgs = await fetchAllMessages(sessionId);
+
+  const out = [`# ${title}`, ""];
+  if (detailed) {
+    out.push(
+      `- **Model:** ${sess.model || "?"}`,
+      `- **Thinking:** ${sess.thinking_level || "?"}`,
+      `- **Exported:** ${new Date().toLocaleString()}`,
+      "");
+    const arts = (await (await fetch(`/sessions/${sessionId}/artifacts`)).json()).data;
+    const uploads = arts.filter((a) => a.kind === "upload");
+    if (uploads.length) {
+      out.push("## Attached files", "",
+        ...uploads.map((a) => `- **${a.name}** — ${a.summary || ""}`), "");
+    }
+  }
+
+  // Conversation (request + response) — both exports include this.
+  out.push("## Conversation", "");
+  for (const m of msgs) {
+    if (m.role === "user") out.push("### 🧑 You", "", m.content.replace(/^\[revise\] /, "↻ Revised: "), "");
+    else if (m.role === "assistant") out.push("### 🤖 Assistant", "", m.content, "");
+  }
+
+  if (detailed) {
+    const plan = (await (await fetch(`/sessions/${sessionId}/plan`)).json()).data;
+    if (plan.length) {
+      out.push("---", "", "## 🧩 Research plan & steps", "");
+      for (const n of plan) {
+        const deps = n.depends_on && n.depends_on.length ? ` · depends on ${n.depends_on.join(", ")}` : "";
+        out.push(`### Step ${n.step_number}: ${n.title} — _${n.status}_${deps}`, "");
+        if (n.description) out.push(`> ${n.description}`, "");
+        if (n.result) out.push(n.result, "");
+      }
+    }
+    // Persisted activity trace (tools, reflections, evaluator) — oldest first.
+    const evs = (await (await fetch(`/sessions/${sessionId}/events`)).json()).data;
+    const activity = evs.map((e) => eventLine(e.type, e.data));
+    if (activity.length) {
+      out.push("---", "", "## 🛠 Activity trace", "", "```", ...activity, "```", "");
+    }
+  }
+
+  downloadText(`${detailed ? "full" : "chat"}-${slug(title)}.md`, out.join("\n"));
+}
+
+async function deleteSession(id, title) {
+  if (!confirm(`Delete chat "${title || "Untitled"}"? This cannot be undone.`)) return;
+  await fetch(`/sessions/${id}`, { method: "DELETE" }).catch(() => {});
+  delete sessionsById[id];
+  if (id === sessionId) await newChat();
+  else await loadSessions();
+}
+
+async function newChat() {
+  sessionId = null;
+  $("thread").innerHTML = ""; $("plan").innerHTML = ""; $("log").innerHTML = "";
+  for (const k in steps) delete steps[k];
+  setStatus("new");
+  await loadSessions();
+  $("q").focus();
+}
+
+// ---- File / image uploads ----
+async function uploadFiles(files) {
+  if (!files.length) return;
+  if (!sessionId) sessionId = await createSession(files[0].name);
+  $("attach").classList.add("busy");
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await fetch(`/sessions/${sessionId}/files`, { method: "POST", body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      const a = (await r.json()).data;
+      addBubble("You", `📎 ${a.name}${a.summary ? " — " + a.summary : ""}`, "user");
+      log(`📎 uploaded ${a.name}`);
+    } catch (e) {
+      addBubble("Error", `Upload failed for ${f.name}`, "assistant");
+    }
+  }
+  $("attach").classList.remove("busy");
+  setStatus("file ready — ask about it");
+  await loadSessions();
+}
+
+async function createSession(title) {
+  const r = await fetch("/sessions", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({title: title.slice(0, 80), ...currentChoice()})
+  });
+  return (await r.json()).data.id;
+}
+
+// ---- Run / continue ----
+async function streamRequest(url, body) {
+  $("run").disabled = true; $("stop").disabled = false;
+  const resp = await fetch(url, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream: true});
+    const frames = buf.split("\n\n");
+    buf = frames.pop();
+    for (const frame of frames) {
+      const line = frame.split("\n").find(l => l.startsWith("data: "));
+      if (line) handle(JSON.parse(line.slice(6)));
+    }
+  }
+  $("run").disabled = false; $("stop").disabled = true;
+  await loadSessions();
+}
+
+async function run() {
+  const query = $("q").value.trim();
+  if (!query) return;
+  $("q").value = ""; autoGrow();
+  // Fresh plan/activity for this turn; conversation thread persists.
+  $("plan").innerHTML = ""; $("log").innerHTML = "";
+  for (const k in steps) delete steps[k];
+  streamBubble = null;
+  addBubble("You", query, "user");
+  setStatus("planning…");
+  if (!sessionId) sessionId = await createSession(query);
+  await streamRequest(
+    `/sessions/${sessionId}/research/stream`, {query, ...currentChoice()}
+  );
+}
+
+function handle(ev) {
+  switch (ev.type) {
+    case "plan_created":
+      setStatus("executing…");
+      renderPlan(ev.steps, !!ev.revised);
+      if (ev.revised) log(`↻ revised — kept: ${(ev.kept || []).join(", ") || "none"}`);
+      break;
+    case "node_started":
+      setBadge(ev.step_number, "running");
+      log(`▶ step ${ev.step_number} started`); break;
+    case "tool": {
+      const s = steps[ev.step_number];
+      if (s) {
+        const t = document.createElement("div"); t.className = "tool";
+        t.innerHTML = `<code>${ev.tool}</code> → ${(ev.result_summary || "").slice(0, 140)}`;
+        s.el.appendChild(t);
+      }
+      log(`⚙ step ${ev.step_number}: ${ev.tool}`); break;
+    }
+    case "node_completed":
+      setBadge(ev.step_number, ev.status);
+      if (steps[ev.step_number]) steps[ev.step_number].result.textContent = ev.result || "";
+      log(`✔ step ${ev.step_number} ${ev.status}`); break;
+    case "reflection":
+      log(`🔎 step ${ev.step_number} self-review: ${ev.sufficient ? "sufficient" : "gathering more"} — ${ev.reason}`); break;
+    case "evaluator":
+      log(`↻ evaluator: ${ev.done ? "done" : "needs more"} — ${ev.reason}`); break;
+    case "stopped":
+      setStatus("stopping…"); log(`⏹ ${ev.reason}`); break;
+    case "budget_exceeded":
+      setStatus("budget…"); log(`💰 ${ev.reason}`); break;
+    case "no_progress":
+      log(`⚠ ${ev.reason}`); break;
+    case "answer_delta": {
+      if (!streamBubble) { streamBubble = addBubble("Assistant", "", "assistant"); streamBubble._raw = ""; }
+      streamBubble._raw += ev.text;
+      renderMarkdown(bubbleBody(streamBubble), streamBubble._raw);
+      scrollThread(); break;
+    }
+    case "answer": {
+      setStatus(ev.stopped ? "stopped" : "done");
+      // Reuse the streamed bubble if we built one; otherwise render in full.
+      const b = streamBubble || addBubble("Assistant", "", "assistant");
+      const body = bubbleBody(b);
+      renderMarkdown(body, ev.answer);
+      renderMermaid(body);  // diagrams only render once the full answer is in
+      const st = document.createElement("div"); st.className = "stats";
+      st.textContent = `iterations: ${ev.iterations} · tokens in/out: ${ev.input_tokens}/${ev.output_tokens}`;
+      b.appendChild(st); streamBubble = null; scrollThread(); break;
+    }
+    case "error":
+      setStatus("error"); addBubble("Error", ev.message, "assistant"); break;
+  }
+}
+
+async function stop() {
+  if (!sessionId) return;
+  $("stop").disabled = true;
+  await fetch(`/sessions/${sessionId}/stop`, {method: "POST"});
+  log("⏹ stop requested");
+}
+
+// Collapsible Plan / Activity sections.
+for (const h of document.querySelectorAll(".toggle")) {
+  h.addEventListener("click", () => {
+    const target = $(h.dataset.target);
+    const hidden = target.classList.toggle("collapsed");
+    h.classList.toggle("closed", hidden);
+  });
+}
+
+$("file").addEventListener("change", (e) => {
+  uploadFiles([...e.target.files]); e.target.value = "";
+});
+$("exportMd").addEventListener("click", () => exportChat(false));
+$("exportFull").addEventListener("click", () => exportChat(true));
+$("run").addEventListener("click", run);
+$("stop").addEventListener("click", stop);
+$("new").addEventListener("click", newChat);
+// Auto-grow the composer with its content, up to the CSS max-height.
+function autoGrow() {
+  const t = $("q");
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, 200) + "px";
+}
+$("q").addEventListener("input", autoGrow);
+$("q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); run(); }
+});
+// When the model/thinking dropdown changes on an existing session, persist it
+// so a mid-session switch sticks (the next request carries the new choice).
+for (const id of ["model", "thinking"]) {
+  $(id).addEventListener("change", async () => {
+    if (!sessionId) return;
+    await fetch(`/sessions/${sessionId}/settings`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(currentChoice())
+    }).catch(() => {});
+    if (sessionsById[sessionId]) Object.assign(sessionsById[sessionId], currentChoice());
+  });
+}
+loadModelOptions();
+loadSessions();
+</script>
+</body>
+</html>
