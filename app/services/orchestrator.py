@@ -344,8 +344,15 @@ class OrchestratorService:
         digest = await self._results_digest(session_id)
         usage: dict[str, int] = {}
         answer_parts: list[str] = []
+
+        async def _on_new_part(part: int) -> None:
+            # Only announce a continuation (part 2+); the first part is just the
+            # normal answer stream. Lets the UI show "writing part N…".
+            if part > 1:
+                await run.emit("answer_part", part=part)
+
         async for chunk in self._planner.synthesize_stream(
-            query, digest, self._history, usage
+            query, digest, self._history, usage, on_new_part=_on_new_part
         ):
             answer_parts.append(chunk)
             await run.emit("answer_delta", text=chunk)

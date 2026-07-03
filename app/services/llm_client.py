@@ -247,7 +247,10 @@ class LlmClient:
         """Stream a plain-text response chunk by chunk.
 
         Token usage from the final chunk is written into ``usage_sink`` so the
-        caller can ledger it after the stream is exhausted.
+        caller can ledger it after the stream is exhausted. ``usage_sink`` also
+        gets ``truncated`` = 1 when the model stopped because it hit the output
+        cap (``finish_reason=MAX_TOKENS``) rather than finishing naturally — the
+        signal the synthesizer uses to continue the answer in another call.
         """
 
         config = types.GenerateContentConfig(
@@ -265,6 +268,11 @@ class LlmClient:
             if usage:
                 usage_sink["in"] = usage.prompt_token_count or 0
                 usage_sink["out"] = usage.candidates_token_count or 0
+            finish = _finish_reason(chunk)
+            if finish is not None:
+                usage_sink["truncated"] = (
+                    1 if finish == types.FinishReason.MAX_TOKENS else 0
+                )
             if chunk.text:
                 yield chunk.text
 
@@ -288,6 +296,17 @@ class LlmClient:
         input_tokens = (usage.prompt_token_count or 0) if usage else 0
         output_tokens = (usage.candidates_token_count or 0) if usage else 0
         return response.text or "", _extract_sources(response), input_tokens, output_tokens
+
+
+def _finish_reason(chunk: Any) -> types.FinishReason | None:
+    """The first candidate's finish reason on a stream chunk, if present.
+
+    Only the final chunk of a Gemini stream carries a finish reason; earlier
+    chunks return None. MAX_TOKENS means the output cap truncated the answer.
+    """
+
+    candidates = getattr(chunk, "candidates", None) or []
+    return getattr(candidates[0], "finish_reason", None) if candidates else None
 
 
 def _extract_sources(response: Any) -> list[str]:

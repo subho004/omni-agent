@@ -7,14 +7,18 @@ constrained decoding (docs/implementation-plan.md Phases 7-9).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from google.genai import types
 
+from app.core.config import settings
+from app.core.logging import get_logger
 from app.schemas.research import EvalDecision, Plan, RevisePlan, StepReflection
-from app.services.agent_loop import build_user_content
+from app.services.agent_loop import build_model_content, build_user_content
 from app.services.llm_client import LlmClient
 from app.tools.registry import ALL_TOOLS
+
+logger = get_logger(__name__)
 
 _CAPABILITIES = "\n".join(f"- {t.name}: {t.description}" for t in ALL_TOOLS)
 
@@ -106,25 +110,55 @@ _REFLECT_SYSTEM = (
 
 _SYNTH_SYSTEM = (
     "You are a research writer. Using the gathered results, write a clear, "
-    "thorough answer to the user's query in GitHub-Flavored Markdown.\n\n"
-    "Formatting — you have full freedom; match the format to the request:\n"
-    "- headings, bold/italic, and bullet or numbered lists for structure;\n"
-    "- Markdown tables for tabular data, comparisons, or metrics;\n"
-    "- fenced code blocks for code, commands, or JSON;\n"
+    "thorough answer to the user's query. ALWAYS respond in well-structured "
+    "GitHub-Flavored Markdown — never a bare wall of plain text.\n\n"
+    "Formatting palette — the frontend renders all of GFM plus Mermaid, KaTeX "
+    "math, and HTML <details>. Reach for whichever elements fit the content; a "
+    "substantial answer should use several:\n"
+    "- headings (## / ###) to organize sections, and short paragraphs for prose;\n"
+    "- **bold**, *italic*, ~~strikethrough~~, and `inline code` for emphasis and "
+    "identifiers;\n"
+    "- bullet lists, numbered lists, and task lists (`- [ ]` / `- [x]`) for "
+    "steps, checklists, or requirement coverage;\n"
+    "- Markdown tables for tabular data, comparisons, specs, or metrics;\n"
+    "- fenced code blocks (```lang) for code, commands, config, or JSON;\n"
     "- Mermaid diagrams inside ```mermaid fences for flows, timelines, "
-    "architectures, sequences, or relationship/org charts;\n"
-    "- blockquotes and inline links for citations.\n"
-    "If the user asked for a table, diagram, chart, or a specific format, "
+    "architectures, sequences, relationship/org charts, and charts (pie, "
+    "xychart-beta, quadrantChart, gantt);\n"
+    "- inline math `$…$` and block math `$$…$$` (KaTeX) for any formula, "
+    "equation, or quantitative relationship;\n"
+    "- blockquotes for callouts, and inline links for citations;\n"
+    "- horizontal rules (---) to separate major sections;\n"
+    "- collapsible `<details><summary>…</summary>…</details>` blocks to tuck "
+    "away long tables, raw data, derivations, or supplementary detail without "
+    "cluttering the main flow.\n"
+    "If the user asked for a table, diagram, chart, math, or a specific format, "
     "produce exactly that.\n\n"
-    "Substance:\n"
+    "Substance — be thorough and lossless:\n"
     "- Lead with the actual information found — present concrete data, numbers, "
     "and findings directly. Do NOT open with caveats about what was blocked or "
     "restricted; the reader wants the answer, not the obstacles.\n"
+    "- The extraction often surfaces important details the user did not "
+    "explicitly ask for but would want. Preserve those: report the most "
+    "relevant facts, figures, caveats, and context in full rather than "
+    "over-summarizing. Prefer a longer, well-organized answer over dropping "
+    "detail — use headings and <details> sections to keep length navigable.\n"
     "- Cite only real sources (URLs or document names that appear in the "
     "results). The '[Step N: … — status]' lines are internal plan labels: "
     "never present them as sources or mention step numbers.\n"
     "- If some data is genuinely missing, still give the best answer possible "
     "from what was gathered, and note any gap briefly at the END — not the start."
+)
+
+_CONTINUE_SYNTH = (
+    "Your previous message was cut off because it reached the output length "
+    "limit — it is NOT finished. Continue the SAME Markdown answer from exactly "
+    "where you stopped, even if that means resuming mid-sentence, mid-list, or "
+    "mid-table row. Do NOT repeat, re-introduce, or re-summarize anything you "
+    "already wrote, and do NOT add a lead-in like 'continuing' or restate the "
+    "heading — your output will be concatenated directly onto the previous text, "
+    "so it must join seamlessly. Keep going until the answer is genuinely "
+    "complete, then stop."
 )
 
 
@@ -230,23 +264,71 @@ class PlannerService:
         results_digest: str,
         history: str,
         usage_sink: dict[str, int],
+        on_new_part: Callable[[int], Awaitable[None]] | None = None,
     ) -> AsyncIterator[str]:
-        """Stream the final answer; falls back to a single call if the LLM
-        client does not support streaming (e.g. test fakes)."""
+        """Stream the final answer, transparently spanning multiple model calls.
 
-        content = self._synth_content(query, results_digest, history)
-        if hasattr(self._llm, "generate_stream"):
-            async for chunk in self._llm.generate_stream(
-                [content], _SYNTH_SYSTEM, usage_sink
-            ):
-                yield chunk
-        else:
+        A single call is capped at the model's ``max_output_tokens``, so a long
+        answer would otherwise be silently truncated. When a call stops because
+        it hit that cap (``truncated``), synthesis continues in another streamed
+        call that resumes exactly where the last one stopped; every part is
+        yielded in order so the caller/UI concatenates them into one answer.
+        ``usage_sink`` accumulates token usage across all parts. ``on_new_part``
+        (if given) is awaited with the 1-based part number as each part begins.
+
+        Falls back to a single non-streaming call if the LLM client does not
+        support streaming (e.g. test fakes).
+        """
+
+        base = self._synth_content(query, results_digest, history)
+        if not hasattr(self._llm, "generate_stream"):
             result = await self._llm.generate(
-                contents=[content], system_instruction=_SYNTH_SYSTEM
+                contents=[base], system_instruction=_SYNTH_SYSTEM
             )
             usage_sink["in"] = result.input_tokens
             usage_sink["out"] = result.output_tokens
             yield result.text
+            return
+
+        max_parts = settings.max_synthesis_parts
+        total_in = total_out = 0
+        written = ""
+        part = 0
+        while True:
+            part += 1
+            if on_new_part is not None:
+                await on_new_part(part)
+            # First part sends only the base prompt; each continuation replays
+            # the answer-so-far as a model turn, then asks to resume from it.
+            contents = [base]
+            if written:
+                contents.append(build_model_content(written))
+                contents.append(build_user_content(_CONTINUE_SYNTH))
+
+            part_sink: dict[str, int] = {}
+            before = len(written)
+            async for chunk in self._llm.generate_stream(
+                contents, _SYNTH_SYSTEM, part_sink
+            ):
+                written += chunk
+                yield chunk
+            total_in += part_sink.get("in", 0)
+            total_out += part_sink.get("out", 0)
+
+            # Stop when the model finished naturally, produced nothing new (no
+            # point re-asking), or we've chained the configured maximum parts.
+            if not part_sink.get("truncated") or len(written) == before:
+                break
+            if max_parts > 0 and part >= max_parts:
+                logger.warning(
+                    "synthesis stopped at max_synthesis_parts=%d; answer may be "
+                    "truncated",
+                    max_parts,
+                )
+                break
+
+        usage_sink["in"] = total_in
+        usage_sink["out"] = total_out
 
 
 __all__ = ["PlannerService"]

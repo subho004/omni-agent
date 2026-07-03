@@ -7,6 +7,11 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- KaTeX for inline ($…$) and block ($$…$$) math, wired into marked below. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@5/lib/index.umd.min.js"></script>
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #e6e9ef;
@@ -153,6 +158,20 @@
   .md .mermaid { background: #0d1117; border: 1px solid var(--border);
     border-radius: 8px; padding: 10px; margin: .6em 0; text-align: center; }
   .md hr { border: 0; border-top: 1px solid var(--border); margin: .8em 0; }
+  .md del { color: var(--muted); }
+  /* GFM task lists (checkboxes) — marked emits a bare <li> with a checkbox */
+  .md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.2em; }
+  .md li > input[type="checkbox"] { margin: 0 .5em 0 0; vertical-align: middle;
+    accent-color: var(--accent); }
+  /* Collapsible <details> sections */
+  .md details { border: 1px solid var(--border); border-radius: 8px;
+    padding: .3em .8em; margin: .6em 0; background: #12151c; }
+  .md details[open] { padding-bottom: .6em; }
+  .md summary { cursor: pointer; user-select: none; font-weight: 600; padding: .2em 0; }
+  .md summary::marker { color: var(--muted); }
+  /* KaTeX block math: center and let long expressions scroll instead of clipping */
+  .md .katex-display { margin: .6em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+  .md .katex { font-size: 1.02em; }
   .tool { font-size: 12px; color: var(--muted); margin: 3px 0 0 4px;
     white-space: pre-wrap; overflow-wrap: anywhere; }
   .tool code { color: var(--accent); }
@@ -378,21 +397,56 @@ function eventLine(type, d) {
     case "stopped": return `⏹ ${d.reason || "stopped"}`;
     case "budget_exceeded": return `💰 ${d.reason || "budget reached"}`;
     case "no_progress": return `⚠ ${d.reason || "no progress"}`;
+    case "answer_part": return `✍ answer continued — part ${d.part}`;
     case "error": return `❌ ${d.message || "error"}`;
     default: return type;
   }
 }
 
-if (window.marked) marked.setOptions({ gfm: true, breaks: true });
+if (window.marked) {
+  marked.setOptions({ gfm: true, breaks: true });
+  // Inline `$…$` and block `$$…$$` math → KaTeX (handled during parse so
+  // markdown doesn't mangle underscores/backslashes in formulas). Standard
+  // delimiter rules (not nonStandard) so plain "$5 and $10" isn't read as math.
+  if (window.markedKatex) {
+    marked.use(window.markedKatex({ throwOnError: false }));
+  }
+}
 if (window.mermaid) mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+
+// Keep the tags/attrs that GFM + KaTeX emit but DOMPurify might otherwise drop:
+// <details>/<summary> (collapsibles), task-list <input> checkboxes, and the
+// MathML/aria markup KaTeX outputs alongside its HTML.
+const _SANITIZE = {
+  ADD_TAGS: ["details", "summary"],
+  ADD_ATTR: ["open", "type", "checked", "disabled"],
+  USE_PROFILES: { html: true, svg: true, mathMl: true },
+};
 
 // Render markdown (sanitized) into an element; falls back to plain text.
 function renderMarkdown(el, raw) {
   if (window.marked) {
     let html = marked.parse(raw || "");
-    if (window.DOMPurify) html = DOMPurify.sanitize(html);
+    if (window.DOMPurify) html = DOMPurify.sanitize(html, _SANITIZE);
     el.innerHTML = html;
     el.classList.add("md");
+    // Mop up math the marked extension can't reach: inside raw-HTML blocks like
+    // <details>, marked emits the content verbatim so `$…$` never gets parsed.
+    // Scope this to <details> only — prose math is already handled above, and
+    // running it there would misread currency ("$5 and $10") as math.
+    if (window.renderMathInElement) {
+      el.querySelectorAll("details").forEach((d) => {
+        try {
+          renderMathInElement(d, {
+            delimiters: [
+              { left: "$$", right: "$$", display: true },
+              { left: "$", right: "$", display: false },
+            ],
+            throwOnError: false,
+          });
+        } catch (e) { /* leave source visible */ }
+      });
+    }
   } else {
     el.textContent = raw || "";
   }
@@ -780,6 +834,11 @@ function handle(ev) {
       setStatus("budget…"); log(`💰 ${ev.reason}`); break;
     case "no_progress":
       log(`⚠ ${ev.reason}`); break;
+    case "answer_part":
+      // A long answer exceeded one model call's output cap and is being
+      // continued in another streamed part, concatenated into the same bubble.
+      setStatus(`writing part ${ev.part}…`);
+      log(`✍ answer continued — part ${ev.part}`); break;
     case "answer_delta": {
       if (!streamBubble) { streamBubble = addBubble("Assistant", "", "assistant"); streamBubble._raw = ""; }
       streamBubble._raw += ev.text;

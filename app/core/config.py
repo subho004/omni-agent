@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # Both accept 0 (or any non-positive value) = no limit.
     max_subagent_depth: int = 3
     max_spawn_fanout: int = 6
+    # Final-answer synthesis: when the answer is long enough to hit the model's
+    # output-token cap in a single call, synthesis continues across additional
+    # streamed calls ("parts"), each picking up exactly where the previous one
+    # stopped; the UI concatenates them into one seamless answer. This bounds how
+    # many parts to chain so a runaway can't stream forever (0 = no limit).
+    max_synthesis_parts: int = 8
     browser_use_max_steps: int = 24
     llm_max_retries: int = 6
     session_token_budget: int = 0  # 0 = unlimited
