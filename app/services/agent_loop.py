@@ -31,7 +31,10 @@ from app.tools.registry import ALL_TOOLS, TOOLS_BY_NAME
 
 logger = get_logger(__name__)
 
-TRACE_SUMMARY_CHARS = 600
+# Cap on the persisted/streamed tool-result summary shown in the UI trace. This
+# is display only — the model always receives the FULL tool result via the
+# function response — so keep it generous to avoid clipping sub-agent results.
+TRACE_SUMMARY_CHARS = 8000
 
 # Optional async callback used to stream events (e.g. tool calls) live.
 EventCallback = Callable[[str, dict[str, Any]], Awaitable[None]]

@@ -153,7 +153,8 @@
   .md .mermaid { background: #0d1117; border: 1px solid var(--border);
     border-radius: 8px; padding: 10px; margin: .6em 0; text-align: center; }
   .md hr { border: 0; border-top: 1px solid var(--border); margin: .8em 0; }
-  .tool { font-size: 12px; color: var(--muted); margin: 3px 0 0 4px; }
+  .tool { font-size: 12px; color: var(--muted); margin: 3px 0 0 4px;
+    white-space: pre-wrap; overflow-wrap: anywhere; }
   .tool code { color: var(--accent); }
   /* Nested child sub-agents (spawn_subagents fan-out) under a plan step. */
   .subagent { border-left: 2px solid var(--border); margin: 5px 0 0 6px; padding: 3px 0 3px 8px; }
@@ -162,7 +163,8 @@
   .subagent .sa-result { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: pre-wrap; }
   .subagent .badge { font-size: 10px; padding: 1px 6px; }
   #log { font-size: 12px; color: var(--muted); margin-top: 10px; }
-  #log div { padding: 2px 0; border-bottom: 1px solid var(--border); }
+  #log div { padding: 2px 0; border-bottom: 1px solid var(--border);
+    white-space: pre-wrap; overflow-wrap: anywhere; }
   /* Composer */
   .bar { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border);
     align-items: flex-end; }
@@ -358,7 +360,7 @@ function eventLine(type, d) {
     case "node_started": return `▶ step ${d.step_number} started: ${d.title || ""}`;
     case "tool": {
       const who = d.child_title ? ` (🤖 ${d.child_title})` : "";
-      return `⚙ step ${d.step_number}${who}: ${d.tool} → ${(d.result_summary || "").slice(0, 120)}`;
+      return `⚙ step ${d.step_number}${who}: ${d.tool} → ${d.result_summary || ""}`;
     }
     case "node_completed": return `✔ step ${d.step_number} ${d.status}`;
     case "reflection": return `🔎 step ${d.step_number} self-review: ${d.sufficient ? "sufficient" : "gathering more"} — ${d.reason || ""}`;
@@ -496,8 +498,12 @@ function childBlock(turn, num, idx, title) {
 function replayPlanEvent(type, d) {
   d = d || {}; const turn = d.turn || 1;
   if (type === "tool") {
+    // Full result, no truncation. Build via textContent (not innerHTML) so
+    // JSON/HTML in the summary is shown literally, not interpreted, and wraps.
     const t = document.createElement("div"); t.className = "tool";
-    t.innerHTML = `<code>${d.tool}</code> → ${(d.result_summary || "").slice(0, 140)}`;
+    const code = document.createElement("code"); code.textContent = d.tool || "";
+    t.appendChild(code);
+    t.appendChild(document.createTextNode(" → " + (d.result_summary || "")));
     if (d.child_index !== undefined) {
       const c = childBlock(turn, d.step_number, d.child_index, d.child_title);
       if (c) c.tools.appendChild(t);
@@ -512,7 +518,7 @@ function replayPlanEvent(type, d) {
     if (c) {
       c.badge.className = "badge " + (d.status || "done");
       c.badge.textContent = d.status || "done";
-      c.result.textContent = (d.result || "").slice(0, 500);
+      c.result.textContent = d.result || "";  // full child result, no cut
     }
   }
 }
