@@ -466,7 +466,9 @@ async function loadSessions() {
     el.className = "sess" + (s.id === sessionId ? " active" : "");
     el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${fmtDateTime(s.created_at)}</small><small>tokens in/out: ${fmtTokens(s.input_tokens_used)}/${fmtTokens(s.output_tokens_used)}</small></div>
       <button class="sess-del" title="Delete chat">🗑</button>`;
-    el.querySelector(".sess-main").onclick = () => openSession(s.id);
+    const mainEl = el.querySelector(".sess-main");
+    mainEl.title = s.title || "Untitled";
+    mainEl.onclick = () => openSession(s.id);
     el.querySelector(".sess-del").onclick = (e) => { e.stopPropagation(); deleteSession(s.id, s.title); };
     $("sessions").appendChild(el);
   }
