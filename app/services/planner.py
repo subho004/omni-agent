@@ -44,7 +44,15 @@ _PLANNER_SYSTEM = (
     "- You do not have to foresee every split now: a sub-agent whose step turns "
     "out to be several INDEPENDENT sub-problems can call spawn_subagents to run "
     "them as parallel child agents. So a step may be stated at a slightly higher "
-    "level when its internal breakdown will only become clear at run time."
+    "level when its internal breakdown will only become clear at run time.\n"
+    "- CHASE REFERENCED SOURCES: a source often points at ANOTHER document you "
+    "must then obtain (a citation, a linked filing/PDF, 'see the annual report', "
+    "a download button). Plan to follow such references, not just read the first "
+    "page: use crawl_url and read its returned 'links' to find the exact href, "
+    "then crawl_url that (article/HTML) or download_file + parse_document it "
+    "(PDF/DOCX/data). Reference-following is often iterative and its depth is "
+    "unknown up front — state a step like 'obtain and extract the referenced X' "
+    "and let the sub-agent follow the chain until it holds the actual source."
 )
 
 _EVAL_SYSTEM = (
@@ -59,6 +67,11 @@ _EVAL_SYSTEM = (
     "something;\n"
     "- results only give links, say 'check the official site', or describe "
     "where the data lives instead of providing it;\n"
+    "- results merely REFERENCE another document/filing/dataset (or link to it) "
+    "that was never actually fetched and extracted — the referenced source must "
+    "be obtained, so add a step to crawl_url its link (use the page's returned "
+    "'links') or download_file + parse_document it, following the chain until the "
+    "primary source is in hand;\n"
     "- the answer is generic while the user asked for specific or current data.\n\n"
     "When you add steps, name the specific tool/approach and why it differs "
     "from what already failed (e.g. crawl_url blocked -> browser_use with "
@@ -104,8 +117,13 @@ _REFLECT_SYSTEM = (
     "name the specific tool(s) and exactly what to fetch, extract, or verify "
     "(e.g. 'parse_document on artifact X then bm25_search for Y', 'crawl_url "
     "blocked -> browser_use to navigate and read the table', 'fetch the JSON "
-    "endpoint via download_file'). Only set sufficient=true when the step is "
-    "genuinely and concretely answered; don't demand more once it is."
+    "endpoint via download_file'). A result that only CITES or LINKS a referenced "
+    "document without having fetched and extracted it is NOT sufficient — the "
+    "next_action is to obtain that source: crawl_url its link (from the page's "
+    "returned 'links') or download_file + parse_document it, and follow further "
+    "references the same way until the primary source is in hand. Only set "
+    "sufficient=true when the step is genuinely and concretely answered; don't "
+    "demand more once it is."
 )
 
 _SYNTH_SYSTEM = (

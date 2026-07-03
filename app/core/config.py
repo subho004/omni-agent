@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     session_token_budget: int = 0  # 0 = unlimited
     # Context sizes — Gemini 3 models have a 1M-token window, so feed generously.
     tool_excerpt_chars: int = 48000  # parse_document / crawl_url / read_artifact
+    crawl_max_links: int = 150  # max structured links returned by crawl_url
     doc_section_chars: int = 24000  # doc_navigate per-section text
     history_max_turns: int = 24  # conversation turns fed back into planning
     history_turn_chars: int = 8000  # per-turn char cap in the history digest

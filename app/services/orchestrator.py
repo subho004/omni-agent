@@ -91,7 +91,19 @@ _SUBAGENT_SYSTEM = (
     "gemini_search. Treat gemini_search as a starting point to verify and "
     "extend, not as the final word. Only report that something could not be "
     "done after you have genuinely tried the relevant tools, and always report "
-    "the actual data you obtained rather than just where to find it."
+    "the actual data you obtained rather than just where to find it.\n\n"
+    "CHASE REFERENCED SOURCES: when a page or document you read REFERENCES "
+    "another document you don't yet hold (a citation, a linked filing/PDF, 'see "
+    "X', a download button), obtaining it is your next action — don't stop at "
+    "the pointer. Prefer the direct link: crawl_url the page and read its "
+    "returned 'links' to find the exact href, then crawl_url that (article/HTML) "
+    "or download_file + parse_document it (PDF/DOCX/data). If there's no usable "
+    "link, web_search/gemini_search for the referenced item by name. If it's "
+    "behind interaction (search box, click-through, JS nav), use browser_use "
+    "with explicit steps, or read_artifact the crawl's html_artifact_id to "
+    "inspect the raw DOM (hrefs, embedded JSON, form targets the markdown "
+    "dropped). Each fetch may surface further references — keep following the "
+    "chain until you hold the actual primary source, then extract from it."
 )
 
 

@@ -8,6 +8,7 @@ text never enters the model context directly.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,15 @@ from app.tools.base import Tool, ToolContext
 logger = get_logger(__name__)
 
 _markitdown = MarkItDown()
+
+# Non-parsed artifacts read_artifact may return verbatim (text formats only —
+# never binary like PDF/DOCX/images, which must go through parse_document). Lets
+# an agent inspect raw crawl HTML (hrefs/JSON blobs/form targets the markdown
+# dropped) or a downloaded JSON/CSV endpoint without markitdown re-mangling it.
+_READABLE_TEXT_EXTENSIONS = {
+    ".html", ".htm", ".txt", ".md", ".json", ".csv", ".tsv", ".xml",
+    ".yaml", ".yml", ".log",
+}
 
 
 def _convert_sync(path: str) -> str:
@@ -65,8 +75,17 @@ async def _handle_read(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
     artifact = await ctx.artifacts.find_by_id(artifact_id)
     if artifact is None or artifact.session_id != ctx.session_id:
         return {"error": f"Artifact '{artifact_id}' not found in this session"}
-    if artifact.kind != "parsed":
-        return {"error": "read_artifact only works on parsed (markdown) artifacts"}
+    if (
+        artifact.kind != "parsed"
+        and Path(artifact.uri).suffix.lower() not in _READABLE_TEXT_EXTENSIONS
+    ):
+        return {
+            "error": (
+                "read_artifact reads parsed markdown or text artifacts "
+                "(html/json/csv/xml/txt/…). For binary files (PDF, DOCX) run "
+                "parse_document first."
+            )
+        }
 
     text = await asyncio.to_thread(
         lambda: open(artifact.uri, encoding="utf-8").read()
@@ -104,9 +123,12 @@ parse_document_tool = Tool(
 read_artifact_tool = Tool(
     name="read_artifact",
     description=(
-        "Read a chunk of an already-parsed markdown artifact starting at a "
-        "character offset. Use after parse_document when the document is "
-        "longer than the returned excerpt."
+        "Read a chunk of a text artifact starting at a character offset. Works "
+        "on parsed markdown (after parse_document, when the doc is longer than "
+        "the excerpt) AND on raw text artifacts like the html_artifact_id from "
+        "crawl_url or a downloaded JSON/CSV/XML file — use it to inspect the raw "
+        "DOM or embedded data (hrefs, JSON blobs, form targets) the markdown "
+        "dropped. Not for binary files (PDF, DOCX): parse_document those first."
     ),
     parameters={
         "type": "object",

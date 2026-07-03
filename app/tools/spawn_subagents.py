@@ -32,8 +32,12 @@ _CHILD_SYSTEM = (
     "larger step. Complete only your assigned piece with the available tools "
     "and report the concrete information you found (with source URLs or "
     "document ids). Be persistent: if one tool fails or is blocked, try "
-    "another before giving up. You may spawn your own child agents only if "
-    "your piece itself splits into further independent parts."
+    "another before giving up. If a source REFERENCES another document you "
+    "don't yet hold (a citation, a linked file, a download button), follow it: "
+    "crawl_url the page and use its returned 'links' to find the exact href, "
+    "then crawl_url or download_file + parse_document that target, following the "
+    "chain until you hold the actual source. You may spawn your own child agents "
+    "only if your piece itself splits into further independent parts."
 )
 
 
