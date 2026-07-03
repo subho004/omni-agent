@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.exceptions import SessionNotFoundError
+from app.core.exceptions import NotFoundError, SessionNotFoundError
 from app.core.logging import get_logger
 from app.repositories.agent_session_repository import AgentSessionRepository
 from app.repositories.artifact_repository import ArtifactRepository
@@ -91,6 +91,24 @@ class SessionService:
         await self._require_session(session_id)
         artifacts = await self._artifacts.list_by_session(session_id)
         return [ArtifactResponse.model_validate(a) for a in artifacts]
+
+    async def get_artifact_file(
+        self, session_id: UUID, artifact_id: UUID
+    ) -> tuple[Path, str]:
+        """Resolve an artifact's on-disk path for download.
+
+        Validates the artifact belongs to the session (no cross-session access)
+        and that its backing file still exists. Returns (path, download name).
+        """
+
+        await self._require_session(session_id)
+        artifact = await self._artifacts.find_by_id(artifact_id)
+        if artifact is None or artifact.session_id != session_id:
+            raise NotFoundError(f"Artifact '{artifact_id}' not found")
+        path = Path(artifact.uri)
+        if not path.is_file():
+            raise NotFoundError(f"File for artifact '{artifact_id}' is unavailable")
+        return path, artifact.name
 
     async def save_upload(
         self, session_id: UUID, filename: str, content: bytes

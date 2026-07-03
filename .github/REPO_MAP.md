@@ -44,7 +44,7 @@ rather than replying in a single shot.
 | `app/retrieval/` | Reasoning retrieval | PageIndex-style section-tree builder for long documents |
 | `utils/` | Pure helpers | `response.py` (standard API envelope), etc. |
 | `tests/` | pytest + httpx | Offline tests with fake LLM via `app.dependency_overrides` |
-| `ui/` | Frontend | Single-file `index.html` (vanilla JS): sessions, streaming, plan/activity, uploads, export, Markdown/Mermaid render |
+| `ui/` | Frontend | Single-file `index.html` (vanilla JS): sessions, streaming, uploads, export, Markdown/Mermaid render; right panel is a tabbed view (Plan / Activity / Files) with per-turn plan groups and downloadable files |
 | `docs/` | Design docs | `idea.md` (original brief), `implementation-plan.md` (phased plan) |
 | `.github/` | Governance | `copilot-instructions.md` (engineering guide), this `REPO_MAP.md` |
 
@@ -90,10 +90,10 @@ flowchart TD
 **Component responsibilities**
 
 - **API layer (`api/v1/sessions.py`)** — the only HTTP surface. Creates/lists/
-  deletes sessions, chat, research (+ SSE stream), revise (+ stream), stop, plan,
-  events, messages, artifacts, file upload, model options, settings, export data.
-  Owns the SSE choke point that streams events **and persists them** as the
-  activity trace.
+  deletes sessions, chat, research (+ SSE stream), revise (+ stream), stop, plan
+  (all turns), events, messages, artifacts (list + raw-file download), file
+  upload, model options, settings, export data. Owns the SSE choke point that
+  streams events **and persists them** as the activity trace.
 - **OrchestratorService** — the research control loop. Builds a plan, schedules
   ready nodes as parallel sub-agents over a NetworkX DAG, evaluates/replans,
   and streams a synthesized answer. Owns turns, budgets, stop, no-progress guard.
@@ -106,7 +106,9 @@ flowchart TD
 - **AgentService** — one-shot chat turn (no planning), for direct Q&A.
 - **LlmClient** — thin async Gemini wrapper: model + thinking level selection,
   structured output, streaming, vision, grounded search, retry/backoff, per-model
-  output cap.
+  output cap. Stamps **every** system prompt (planner, evaluator, reviser,
+  reflection, synthesis, tool loop) with the current date/time so all reasoning
+  shares a live "now".
 - **event_bus** — in-memory per-run `RunHandle` (SSE queue + stop flag) and a
   registry so `/stop` can signal an active run.
 - **Repositories / models / db** — async SQLAlchemy persistence.
@@ -126,9 +128,11 @@ flowchart TD
 | **Context management** | Large excerpts/history fed generously; loop context compacted (summarized) when it exceeds a model-derived threshold. |
 | **Streaming + stop + revise** | SSE streams plan/tool/reflection/answer events; runs can be stopped mid-flight; a stopped run can be revised with a new instruction, reusing prior results. |
 | **Session continuity** | Prior conversation + artifacts are fed into new turns; each query is a new "turn" with its own plan scoped by turn number. |
+| **Plan traceability** | `/plan` returns every turn's nodes (not just the latest); the UI groups them per turn ("Chat N") and step results stream un-truncated. |
 | **Activity trace** | Every meaningful event is persisted (`run_events`) so the trace replays on reopen and is included in full export. |
-| **Export** | UI exports a chat as Markdown — a clean request/response file, or a full file with plan steps + activity trace. |
-| **Cost accounting** | Every LLM call is written to a token ledger; an optional per-session token budget caps spend. |
+| **Files** | Session artifacts (uploads, downloads, parsed docs) are shown in the UI's Files tab as a tree by kind and downloaded via `GET .../artifacts/{id}/content`. |
+| **Export** | UI exports a chat as Markdown — a clean request/response file, or a full file with per-turn plan steps + activity trace. |
+| **Cost accounting** | Every LLM call is written to a token ledger; per-session input/output token totals are tracked and shown; an optional per-session token budget caps spend. Each research run also reports its wall-clock elapsed time. |
 
 ---
 
@@ -179,9 +183,9 @@ flowchart TD
 | **crawl4ai** (Playwright) | Headless-browser page fetch → Markdown (`crawl_url`). |
 | **browser-use** (Playwright/patchright) | Prompt-driven browser automation (`browser_use`). |
 | **playwright-stealth** | Anti-fingerprint evasions shared by the scraping tools. |
-| **ddgs** | Web search (`web_search`). |
+| **ddgs** | Web search (`web_search`); configurable region (default worldwide), retries transient backends, treats "no results" as empty not error. |
 | **rank-bm25** | Lexical retrieval over parsed docs (`bm25_search`). |
-| **tenacity** | Retry/backoff on transient Gemini errors. |
+| **tenacity** | Retry/backoff on transient Gemini errors and web-search backends. |
 | **Frontend CDNs** | `marked`, `DOMPurify`, `mermaid` for Markdown/diagram rendering (graceful text fallback offline). |
 
 ---
@@ -199,6 +203,11 @@ flowchart TD
   annotations; avoid `Any`.
 - **Config** only via `from app.core.config import settings`; **model choices**
   only via `app/core/models.py`. No hardcoded secrets/URLs.
+- **Datetime injection** is centralized in `LlmClient._with_datetime` — every
+  system prompt goes through it, so prompts should NOT hand-roll their own "now".
+- **Iteration caps** (`max_agent_iterations`, `max_plan_iterations`,
+  `subagent_max_iterations`) accept `0` = unlimited (loop until answered /
+  stopped / no-progress); the token budget then becomes the main runaway guard.
 - **Namespace packages** in `app/` — new model modules must be added to the
   import list in `db/database.py:init_db()`.
 - Schema evolution uses `create_all` + small additive migrations in

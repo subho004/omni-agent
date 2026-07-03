@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
@@ -350,6 +350,18 @@ async def list_artifacts(
 ) -> JSONResponse:
     result = await service.list_artifacts(session_id)
     return success_response(data=result, message="Artifacts retrieved")
+
+
+@router.get("/{session_id}/artifacts/{artifact_id}/content")
+async def download_artifact(
+    session_id: UUID,
+    artifact_id: UUID,
+    service: SessionService = Depends(get_session_service),
+) -> FileResponse:
+    """Stream an artifact's raw file back as a download."""
+
+    path, name = await service.get_artifact_file(session_id, artifact_id)
+    return FileResponse(path, filename=name)
 
 
 @router.post("/{session_id}/files")

@@ -28,6 +28,37 @@
   aside h1 { font-size: 14px; margin: 0 0 10px; }
   #new { width: 100%; }
   #sessions { overflow-y: auto; flex: 1; padding: 6px; }
+  /* Files tree */
+  .files-empty { color: var(--muted); font-size: 12px; padding: 6px; }
+  .ftree-group { margin-bottom: 2px; }
+  .ftree-label { cursor: pointer; user-select: none; font-size: 12px;
+    color: var(--text); display: flex; align-items: center; gap: 6px;
+    padding: 3px 4px; border-radius: 6px; }
+  .ftree-label:hover { background: #1e222b; }
+  .ftree-label .caret { transition: transform .15s; font-size: 9px;
+    color: var(--muted); display: inline-block; }
+  .ftree-group.closed .caret { transform: rotate(-90deg); }
+  .ftree-group.closed .ftree-children { display: none; }
+  .ftree-count { color: var(--muted); font-size: 10px; margin-left: auto; }
+  .ftree-children { padding-left: 10px; }
+  .ftree-file { display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--muted); padding: 2px 4px 2px 8px; margin-left: 5px;
+    border-left: 1px solid var(--border); }
+  .ftree-file:hover { color: var(--text); }
+  .ftree-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .ftree-dl { flex-shrink: 0; text-decoration: none; color: var(--accent);
+    opacity: 0; font-size: 13px; }
+  .ftree-file:hover .ftree-dl { opacity: 1; }
+  /* Right-panel tabs */
+  .tabs { display: flex; gap: 2px; margin-bottom: 10px;
+    border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; border: 0; border-bottom: 2px solid transparent;
+    border-radius: 0; color: var(--muted); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em; padding: 6px 10px; cursor: pointer; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tabview[hidden] { display: none; }
   .sess {
     display: flex; align-items: center; gap: 4px;
     padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text);
@@ -161,15 +192,21 @@
     <span class="modelbar">
       <label>Model <select id="model" title="Model for this session"></select></label>
       <label>Thinking <select id="thinking" title="Reasoning depth"></select></label>
-      <button id="exportMd" class="mini" title="Export conversation (request + response) as Markdown">↓ MD</button>
+      <button id="exportMd" class="mini" title="Export conversation (request + response) as Markdown">↓ Resp</button>
       <button id="exportFull" class="mini" title="Export full run — request, steps, activity, then response">↓ Full</button>
     </span>
   </header>
   <div class="cols">
     <section class="panel" id="convo"><h2>Conversation</h2><div id="thread"></div></section>
     <section class="panel">
-      <h2 class="toggle" data-target="plan"><span class="caret">▾</span>Plan</h2><div id="plan"></div>
-      <h2 class="toggle" data-target="log" style="margin-top:12px"><span class="caret">▾</span>Activity</h2><div id="log"></div>
+      <div class="tabs">
+        <button class="tab active" data-tab="plan">Plan</button>
+        <button class="tab" data-tab="log">Activity</button>
+        <button class="tab" data-tab="files">Files</button>
+      </div>
+      <div id="plan" class="tabview"></div>
+      <div id="log" class="tabview" hidden></div>
+      <div id="files" class="tabview" hidden><div class="files-empty">Open a chat to see its files</div></div>
     </section>
   </div>
   <div class="bar">
@@ -238,6 +275,65 @@ function fmtDuration(sec) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 function scrollThread() { $("convo").scrollTop = $("convo").scrollHeight; }
+
+// ---- Files tree (left sidebar) ----
+// Artifacts grouped by kind into a collapsible tree for the open session.
+const FILE_KINDS = [
+  { key: "upload", label: "📎 Uploads" },
+  { key: "download", label: "⬇ Downloads" },
+  { key: "parsed", label: "📄 Parsed" },
+];
+function renderFiles(arts, sid) {
+  const box = $("files");
+  box.innerHTML = "";
+  if (!arts || !arts.length) {
+    box.innerHTML = `<div class="files-empty">No files in this chat yet</div>`;
+    return;
+  }
+  const byKind = {};
+  for (const a of arts) (byKind[a.kind] = byKind[a.kind] || []).push(a);
+  // Known kinds first (in order), then any others we don't recognise.
+  const order = FILE_KINDS.slice();
+  for (const k of Object.keys(byKind)) {
+    if (!order.some((o) => o.key === k)) order.push({ key: k, label: `📁 ${k}` });
+  }
+  for (const { key, label } of order) {
+    const items = byKind[key];
+    if (!items || !items.length) continue;
+    const group = document.createElement("div");
+    group.className = "ftree-group";
+    const head = document.createElement("div");
+    head.className = "ftree-label";
+    head.innerHTML = `<span class="caret">▾</span><span>${label}</span><span class="ftree-count">${items.length}</span>`;
+    head.onclick = () => group.classList.toggle("closed");
+    const children = document.createElement("div");
+    children.className = "ftree-children";
+    for (const a of items) {
+      const leaf = document.createElement("div");
+      leaf.className = "ftree-file";
+      leaf.title = a.summary ? `${a.name} — ${a.summary}` : a.name;
+      const name = document.createElement("span");
+      name.className = "ftree-name";
+      name.textContent = a.name;
+      const dl = document.createElement("a");
+      dl.className = "ftree-dl";
+      dl.href = `/sessions/${sid}/artifacts/${a.id}/content`;
+      dl.setAttribute("download", a.name);
+      dl.title = "Download";
+      dl.textContent = "⤓";
+      leaf.append(name, dl);
+      children.appendChild(leaf);
+    }
+    group.appendChild(head);
+    group.appendChild(children);
+    box.appendChild(group);
+  }
+}
+async function loadFiles(id) {
+  if (!id) { renderFiles([], null); return; }
+  const arts = (await (await fetch(`/sessions/${id}/artifacts`)).json()).data;
+  renderFiles(arts, id);
+}
 
 // Render a persisted/streamed event as a one-line activity string.
 function eventLine(type, d) {
@@ -377,6 +473,7 @@ async function openSession(id) {
     else if (m.role === "assistant") addBubble("Assistant", m.content, "assistant", true);
   }
   const arts = (await (await fetch(`/sessions/${id}/artifacts`)).json()).data;
+  renderFiles(arts, id);
   const uploads = arts.filter((a) => a.kind === "upload");
   if (uploads.length) {
     const names = uploads.map((a) => a.name).join(", ");
@@ -479,7 +576,7 @@ async function deleteSession(id, title) {
 
 async function newChat() {
   sessionId = null;
-  $("thread").innerHTML = ""; $("log").innerHTML = ""; clearPlan();
+  $("thread").innerHTML = ""; $("log").innerHTML = ""; clearPlan(); renderFiles([], null);
   setStatus("new");
   await loadSessions();
   $("q").focus();
@@ -505,6 +602,8 @@ async function uploadFiles(files) {
   }
   $("attach").classList.remove("busy");
   setStatus("file ready — ask about it");
+  await loadFiles(sessionId);
+  showTab("files");  // surface the just-uploaded file
   await loadSessions();
 }
 
@@ -550,6 +649,7 @@ async function run() {
   if ($("log").childNodes.length) log("──────── new query ────────");
   streamBubble = null;
   addBubble("You", query, "user");
+  showTab("plan");  // focus the plan as this turn's steps come in
   setStatus("planning…");
   if (!sessionId) sessionId = await createSession(query);
   await streamRequest(
@@ -609,7 +709,9 @@ function handle(ev) {
       renderMermaid(body);  // diagrams only render once the full answer is in
       const st = document.createElement("div"); st.className = "stats";
       st.textContent = `time: ${fmtDuration(ev.elapsed_seconds)} · iterations: ${ev.iterations} · tokens in/out: ${ev.input_tokens}/${ev.output_tokens}`;
-      b.appendChild(st); streamBubble = null; scrollThread(); break;
+      b.appendChild(st); streamBubble = null; scrollThread();
+      loadFiles(sessionId);  // surface any files the run downloaded/parsed
+      break;
     }
     case "error":
       setStatus("error"); addBubble("Error", ev.message, "assistant"); break;
@@ -623,14 +725,13 @@ async function stop() {
   log("⏹ stop requested");
 }
 
-// Collapsible Plan / Activity sections.
-for (const h of document.querySelectorAll(".toggle")) {
-  h.addEventListener("click", () => {
-    const target = $(h.dataset.target);
-    const hidden = target.classList.toggle("collapsed");
-    h.classList.toggle("closed", hidden);
-  });
+// Right-panel tabs: Plan / Activity / Files — only the focused view is shown.
+const TABS = [...document.querySelectorAll(".tab")];
+function showTab(name) {
+  for (const t of TABS) t.classList.toggle("active", t.dataset.tab === name);
+  for (const t of TABS) $(t.dataset.tab).hidden = t.dataset.tab !== name;
 }
+for (const t of TABS) t.addEventListener("click", () => showTab(t.dataset.tab));
 
 $("file").addEventListener("change", (e) => {
   uploadFiles([...e.target.files]); e.target.value = "";
