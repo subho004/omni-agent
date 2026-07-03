@@ -192,8 +192,8 @@
     <span class="modelbar">
       <label>Model <select id="model" title="Model for this session"></select></label>
       <label>Thinking <select id="thinking" title="Reasoning depth"></select></label>
-      <button id="exportMd" class="mini" title="Export conversation (request + response) as Markdown">↓ Resp</button>
-      <button id="exportFull" class="mini" title="Export full run — request, steps, activity, then response">↓ Full</button>
+      <button id="exportMd" class="mini" title="Export conversation (request + response) as Markdown">↓ Chats</button>
+      <button id="exportFull" class="mini" title="Export full run — request, steps, activity, then response">↓ All</button>
     </span>
   </header>
   <div class="cols">
@@ -507,6 +507,13 @@ function downloadText(filename, text) {
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
+// Trigger a browser download for a URL (used to pull each attached file).
+function triggerDownload(href, filename) {
+  const a = document.createElement("a");
+  a.href = href; a.download = filename || ""; a.rel = "noopener";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function slug(s) { return (s || "chat").replace(/[^\w]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "chat"; }
 
