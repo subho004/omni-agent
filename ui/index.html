@@ -274,6 +274,15 @@ function fmtDuration(sec) {
   const m = Math.floor(sec / 60), s = Math.round(sec % 60);
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
+// Backend timestamps are UTC but serialized without a tz suffix; treat a bare
+// (naive) timestamp as UTC so the browser renders it in the user's local time.
+function fmtDateTime(ts) {
+  if (!ts) return "";
+  let s = String(ts);
+  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) s = s.replace(" ", "T") + "Z";
+  const d = new Date(s);
+  return isNaN(d) ? String(ts) : d.toLocaleString();
+}
 function scrollThread() { $("convo").scrollTop = $("convo").scrollHeight; }
 
 // ---- Files tree (left sidebar) ----
@@ -455,7 +464,7 @@ async function loadSessions() {
     sessionsById[s.id] = s;
     const el = document.createElement("div");
     el.className = "sess" + (s.id === sessionId ? " active" : "");
-    el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${new Date(s.created_at).toLocaleString()}</small><small>tokens in/out: ${fmtTokens(s.input_tokens_used)}/${fmtTokens(s.output_tokens_used)}</small></div>
+    el.innerHTML = `<div class="sess-main">${s.title || "Untitled"}<small>${fmtDateTime(s.created_at)}</small><small>tokens in/out: ${fmtTokens(s.input_tokens_used)}/${fmtTokens(s.output_tokens_used)}</small></div>
       <button class="sess-del" title="Delete chat">🗑</button>`;
     el.querySelector(".sess-main").onclick = () => openSession(s.id);
     el.querySelector(".sess-del").onclick = (e) => { e.stopPropagation(); deleteSession(s.id, s.title); };
