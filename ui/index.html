@@ -249,6 +249,30 @@
 </main>
 
 <script>
+// Detect the visitor's country from their browser (region subtag of the
+// locale, e.g. "en-IN" -> "IN") and attach it as X-User-Country on every
+// request. The backend uses it to localize agents + scraping, falling back to
+// the USER_COUNTRY env default when it's blank.
+const USER_COUNTRY = (() => {
+  try {
+    const loc = navigator.language
+      || (navigator.languages && navigator.languages[0]) || "";
+    const parts = loc.split("-");
+    return parts.length > 1 ? parts[parts.length - 1].toUpperCase() : "";
+  } catch { return ""; }
+})();
+const _origFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  if (!USER_COUNTRY) return _origFetch(input, init);
+  init = { ...(init || {}) };
+  const headers = new Headers(
+    init.headers || (input instanceof Request ? input.headers : undefined)
+  );
+  headers.set("X-User-Country", USER_COUNTRY);
+  init.headers = headers;
+  return _origFetch(input, init);
+};
+
 const $ = (id) => document.getElementById(id);
 const steps = {};        // "turn:step" -> {el, badge, result}
 const turnGroups = {};   // turn -> group container element

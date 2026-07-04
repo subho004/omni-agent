@@ -28,17 +28,22 @@ from app.core.models import (
     max_output_tokens_for,
     resolve_thinking_level,
 )
+from app.core.request_context import current_country
+from utils.geo import resolve_country
 
 logger = get_logger(__name__)
 
 
-def _with_datetime(system_instruction: str) -> str:
-    """Prepend the current local date/time to a system prompt.
+def _with_context(system_instruction: str) -> str:
+    """Prepend the current local date/time (and user country) to a system prompt.
 
     Every model turn — planner, evaluator, reviser, reflection, synthesis and
     the tool-calling loop — funnels its system instruction through here, so all
     of them share a consistent, up-to-date "now" for recency/deadline reasoning
     (e.g. "latest", "this year", "as of today") instead of the training cutoff.
+    When ``settings.user_country`` is set, the user's country/locale is shared
+    the same way so agents localize sources, units, language, and "here"/"local"
+    references to that country.
     """
 
     now = datetime.now().astimezone()
@@ -48,6 +53,20 @@ def _with_datetime(system_instruction: str) -> str:
         f"Day of week: {now:%A}. Year: {now:%Y}. "
         "Treat this as 'now' for any date/time-relative reasoning."
     )
+    country_str = current_country()
+    country = resolve_country(country_str)
+    if country is not None:
+        header += (
+            f"\nUser's country: {country.label}. Treat this as the user's "
+            "location for regional sources, local units/currency, language, and "
+            "any 'here'/'local'/'nearby' reference."
+        )
+    elif country_str.strip():
+        # Configured but not in the known table — still pass it through verbatim.
+        header += (
+            f"\nUser's country: {country_str.strip()}. Treat this as "
+            "the user's location for regional context."
+        )
     return f"{header}\n\n{system_instruction}"
 
 
@@ -144,7 +163,7 @@ class LlmClient:
         """Run one model turn; tool calls are returned, never auto-executed."""
 
         config = types.GenerateContentConfig(
-            system_instruction=_with_datetime(system_instruction),
+            system_instruction=_with_context(system_instruction),
             thinking_config=self._thinking_config(),
             max_output_tokens=self._max_output_tokens(),
             tools=(
@@ -193,7 +212,7 @@ class LlmClient:
         """
 
         config = types.GenerateContentConfig(
-            system_instruction=_with_datetime(system_instruction),
+            system_instruction=_with_context(system_instruction),
             thinking_config=self._thinking_config(),
             max_output_tokens=self._max_output_tokens(),
             response_mime_type="application/json",
@@ -254,7 +273,7 @@ class LlmClient:
         """
 
         config = types.GenerateContentConfig(
-            system_instruction=_with_datetime(system_instruction),
+            system_instruction=_with_context(system_instruction),
             thinking_config=self._thinking_config(),
             max_output_tokens=self._max_output_tokens(),
         )

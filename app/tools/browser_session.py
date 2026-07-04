@@ -8,6 +8,11 @@ timezone, and device-scale-factor every time — plus **playwright-stealth**
 evasions injected into the page. Centralising this here keeps the two tools
 consistent and gives us one place to tune anti-bot behaviour.
 
+When ``settings.user_country`` is configured, the locale/timezone are instead
+**pinned** to that country (viewport/user-agent/device still randomised) and a
+matching ``Accept-Language`` header + capital geolocation are sent, so crawls
+present the user's region and geo-gated content resolves correctly.
+
 Nothing here launches a browser itself; it only builds the config objects the
 tools pass to their respective engines.
 """
@@ -20,6 +25,8 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from app.core.logging import get_logger
+from app.core.request_context import current_country
+from utils.geo import CountryProfile, resolve_country
 
 if TYPE_CHECKING:
     from browser_use import BrowserProfile
@@ -110,19 +117,40 @@ class BrowserFingerprint:
     device_scale_factor: float
     locale: str
     timezone_id: str
+    accept_language: str
     extra_args: list[str] = field(default_factory=list)
+    # Set only when a country is configured; pins the page's reported location.
+    latitude: float | None = None
+    longitude: float | None = None
 
 
-def random_fingerprint() -> BrowserFingerprint:
+def random_fingerprint(country: CountryProfile | None = None) -> BrowserFingerprint:
     """Build a new, internally-consistent randomised fingerprint.
 
     Called once per browser session so every crawl looks like a different
-    real user on different hardware.
+    real user on different hardware. When a ``country`` is given (or the active
+    country resolves — the request's ``X-User-Country`` or the env default), the
+    locale/timezone are pinned to it and its capital geolocation +
+    ``Accept-Language`` are attached, so scraping presents the user's region;
+    otherwise a random locale/timezone is chosen (no geolocation) for
+    anti-fingerprinting variety.
     """
+
+    if country is None:
+        country = resolve_country(current_country())
 
     device = random.choice(_DEVICE_PROFILES)
     width, height = random.choice(_VIEWPORTS)
-    locale, timezone_id = random.choice(_LOCALE_TZ)
+    latitude: float | None = None
+    longitude: float | None = None
+    if country is not None:
+        locale, timezone_id = country.locale, country.timezone_id
+        accept_language = country.accept_language
+        latitude, longitude = country.latitude, country.longitude
+    else:
+        locale, timezone_id = random.choice(_LOCALE_TZ)
+        accept_language = f"{locale},{locale.split('-')[0]};q=0.9"
+
     fp = BrowserFingerprint(
         user_agent=device.user_agent,
         platform=device.platform,
@@ -131,6 +159,9 @@ def random_fingerprint() -> BrowserFingerprint:
         device_scale_factor=random.choice(device.scale_factors),
         locale=locale,
         timezone_id=timezone_id,
+        accept_language=accept_language,
+        latitude=latitude,
+        longitude=longitude,
         # Flags that reduce automation fingerprints; window-size matches the
         # chosen viewport so the OS-level window and the page agree.
         extra_args=[
@@ -141,9 +172,9 @@ def random_fingerprint() -> BrowserFingerprint:
         ],
     )
     logger.debug(
-        "browser fingerprint: %s %dx%d %s/%s",
+        "browser fingerprint: %s %dx%d %s/%s%s",
         fp.platform, fp.viewport_width, fp.viewport_height, fp.locale,
-        fp.timezone_id,
+        fp.timezone_id, " (geo-pinned)" if country is not None else "",
     )
     return fp
 
@@ -175,7 +206,7 @@ def new_crawl4ai_configs(
     owns the AsyncWebCrawler lifecycle (a new instance per call).
     """
 
-    from crawl4ai import BrowserConfig, CrawlerRunConfig
+    from crawl4ai import BrowserConfig, CrawlerRunConfig, GeolocationConfig
 
     fp = random_fingerprint()
     init_scripts = [s for s in (stealth_init_script(),) if s]
@@ -188,11 +219,20 @@ def new_crawl4ai_configs(
         enable_stealth=True,  # crawl4ai's native evasions …
         init_scripts=init_scripts,  # … plus playwright-stealth's payload
         extra_args=fp.extra_args,
+        headers={"Accept-Language": fp.accept_language},  # signal the region
+    )
+    # Pin the page's reported geolocation to the configured country's capital so
+    # geo-gated content resolves there; omitted (None) when no country is set.
+    geolocation = (
+        GeolocationConfig(latitude=fp.latitude, longitude=fp.longitude)
+        if fp.latitude is not None and fp.longitude is not None
+        else None
     )
     run_config = CrawlerRunConfig(
         page_timeout=page_timeout_ms,
         locale=fp.locale,
         timezone_id=fp.timezone_id,
+        geolocation=geolocation,
         simulate_user=True,  # small human-like mouse/scroll jitter
         override_navigator=True,  # spoof navigator.* to match the fingerprint
         magic=True,  # crawl4ai's grab-bag of anti-bot handling
@@ -212,8 +252,9 @@ def new_browser_use_profile(*, headless: bool = True) -> BrowserProfile:
 
     fp = random_fingerprint()
     size = ViewportSize(width=fp.viewport_width, height=fp.viewport_height)
-    # BrowserProfile has no locale/timezone_id fields (they'd be ignored), so
-    # we only set the fingerprint dimensions it actually supports.
+    # BrowserProfile has no locale/timezone_id/geolocation fields (they'd be
+    # ignored), so we convey the region via the Accept-Language header — the one
+    # country signal it does support — plus the dimensions it accepts.
     return BrowserProfile(
         headless=headless,
         user_agent=fp.user_agent,
@@ -221,6 +262,7 @@ def new_browser_use_profile(*, headless: bool = True) -> BrowserProfile:
         window_size=size,
         device_scale_factor=fp.device_scale_factor,
         args=fp.extra_args,
+        headers={"Accept-Language": fp.accept_language},
     )
 
 

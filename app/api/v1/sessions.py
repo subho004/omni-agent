@@ -7,11 +7,12 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, Header, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
+from app.core.request_context import set_current_country
 from app.core.models import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
@@ -43,7 +44,27 @@ from utils.response import error_response, success_response
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+async def _apply_country(
+    x_user_country: str | None = Header(default=None),
+) -> None:
+    """Resolve the visitor's country from their browser for this request.
+
+    The frontend detects the country from ``navigator.language`` and sends it as
+    the ``X-User-Country`` header on every request. It is stored in a context var
+    (see ``app.core.request_context``) that the LLM prompt stamp and the scraping
+    browser fingerprint read, overriding the ``USER_COUNTRY`` env default. Absent
+    header → the env default is used.
+    """
+
+    set_current_country(x_user_country)
+
+
+# Router-level dependency so every session/agent route resolves country first;
+# the context var it sets propagates into the streamed run and its sub-agents.
+router = APIRouter(
+    prefix="/sessions", tags=["sessions"], dependencies=[Depends(_apply_country)]
+)
 
 _llm_client: LlmClient | None = None
 

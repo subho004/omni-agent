@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # Web search: ddgs region (e.g. wt-wt worldwide, us-en, uk-en, in-en). The
     # default is worldwide/no-country-bias; the model may override per query.
     search_region: str = "wt-wt"
+    # User's country context: an ISO-2 code (e.g. "IN") or name (e.g. "India").
+    # When set, it is shared with every agent (alongside the date/day) and pins
+    # the scraping browser's locale/timezone/geolocation to that country. Empty
+    # = no country bias (agents get date only; browser uses a random locale).
+    user_country: str = ""
     # Robustness
     tool_default_timeout: float = 360.0  # seconds; per-tool overrides on Tool
     circuit_trip_threshold: int = 3  # tool failures before it's disabled/session

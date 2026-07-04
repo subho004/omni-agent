@@ -42,7 +42,7 @@ rather than replying in a single shot.
 | `app/services/` | Business logic / orchestration | Planner, orchestrator, agent loop, single-agent chat, LLM client, event bus, session use-cases |
 | `app/tools/` | Agent tools + registry | Search, fetch/parse, retrieval, code/shell exec, browser automation, image analysis, plus per-session guard/cache and a shared browser-session factory |
 | `app/retrieval/` | Reasoning retrieval | PageIndex-style section-tree builder for long documents |
-| `utils/` | Pure helpers | `response.py` (standard API envelope), etc. |
+| `utils/` | Pure helpers | `response.py` (standard API envelope), `geo.py` (country → locale/timezone/geo context), etc. |
 | `tests/` | pytest + httpx | Offline tests with fake LLM via `app.dependency_overrides` |
 | `ui/` | Frontend | Single-file `index.html` (vanilla JS): sessions, streaming, uploads, export, Markdown/Mermaid render; right panel is a tabbed view (Plan / Activity / Files) with per-turn plan groups and downloadable files |
 | `docs/` | Design docs | `idea.md` (original brief), `implementation-plan.md` (phased plan) |
@@ -123,10 +123,12 @@ flowchart TD
 | **Dynamic plan reshaping** | The evaluator can not only append steps but drop pending ones (`remove_step_numbers`) and inject dependency edges into pending steps (`new_dependencies`) to reorder or insert a prerequisite mid-run. Orchestrator `_apply_plan_delta` retires dropped nodes and strips dangling edges so the DAG can't deadlock. |
 | **Recursive sub-agent fan-out** | Any agent can call the `spawn_subagents` tool to split its task into N independent child agents run in parallel (each with the full tool set), bounded by `max_subagent_depth` / `max_spawn_fanout`. Lets decomposition happen at run time, not just in the top-level plan. |
 | **Tool use** | Sub-agents call tools via manual function-calling; the registry exposes ~12 tools (see Concepts). |
+| **Source-chasing extraction** | When a source references another document not yet held, the agent follows the reference instead of stopping at the pointer. `crawl_url` returns clean markdown to read PLUS a structured link map (absolute hrefs, internal/external) and a raw-HTML artifact; the agent crawls/downloads the linked source, `read_artifact`s the HTML for onclick/embedded targets the markdown dropped, or drives `browser_use` for JS interaction. The evaluator/reflect prompts treat "only a pointer, source not fetched" as **not done**, so the existing plan-reshaping and gather-more loops iterate until the primary source is in hand. |
 | **Sub-agent self-reflection** | After each pass, a sub-agent critiques its own result ("sufficient, or gather more?") and loops until sufficient or a cap. |
 | **Dynamic robustness** | Per-tool timeouts, per-session circuit breaker for flaky tools, in-session result cache, no-progress guard, refusal detection. |
 | **File / image Q&A** | Uploads become session artifacts; agents `parse_document` → `bm25_search` / `doc_navigate` (PageIndex); images are auto-described via Gemini vision. |
 | **Model & thinking selection** | Per-session choice of model + thinking level (low/medium/high) from a central catalogue; drives context window and output caps. |
+| **Country/locale context** | The visitor's country is resolved per request: the UI detects it from `navigator.language` and sends `X-User-Country`; a router dependency stores it in a context var (`app/core/request_context.py`) that overrides the `USER_COUNTRY` env default. Resolved via `utils/geo.py`, it is injected into every agent prompt alongside the date/day and pins the scraping browser's locale, timezone, capital geolocation, and `Accept-Language` header so crawls present the user's region. Empty = no bias (date-only prompts, randomized browser locale). |
 | **Context management** | Large excerpts/history fed generously; loop context compacted (summarized) when it exceeds a model-derived threshold. |
 | **Streaming + stop + revise** | SSE streams plan/tool/reflection/answer events; runs can be stopped mid-flight; a stopped run can be revised with a new instruction, reusing prior results. |
 | **Session continuity** | Prior conversation + artifacts are fed into new turns; each query is a new "turn" with its own plan scoped by turn number. |
@@ -156,9 +158,13 @@ flowchart TD
   a JSON schema, timeout, and whether it's "breakable" (subject to circuit
   breaking). `spawn_subagents` fans a task out into parallel child agents and
   needs a `session_factory` on the `ToolContext` (set for orchestrated
-  sub-agents, absent on the single-turn chat path).
+  sub-agents, absent on the single-turn chat path). `crawl_url` also returns a
+  structured link map (for source-chasing) and a raw-HTML artifact;
+  `read_artifact` reads parsed markdown AND raw text artifacts (html/json/csv/…)
+  so the agent can inspect a page's DOM/embedded data, not just its markdown.
 - **Artifact** — any file in a session (upload, download, or parsed/crawled
-  output), referenced by id and surfaced to agents so they can act on it.
+  output), referenced by id and surfaced to agents so they can act on it. A
+  crawl stores both a parsed-markdown artifact and a raw-HTML one.
 - **PageIndex retrieval** — reasoning-based navigation of a long document via a
   section tree (`doc_navigate`), complementing lexical `bm25_search`.
 - **ToolContext** — the per-call bundle passed to tools (session id, artifact
@@ -208,8 +214,10 @@ flowchart TD
   annotations; avoid `Any`.
 - **Config** only via `from app.core.config import settings`; **model choices**
   only via `app/core/models.py`. No hardcoded secrets/URLs.
-- **Datetime injection** is centralized in `LlmClient._with_datetime` — every
-  system prompt goes through it, so prompts should NOT hand-roll their own "now".
+- **Context injection** is centralized in `LlmClient._with_context` — every
+  system prompt goes through it, stamping the current date/day AND (when
+  `settings.user_country` is set) the user's country/locale, so prompts should
+  NOT hand-roll their own "now" or location.
 - **Iteration caps** (`max_agent_iterations`, `max_plan_iterations`,
   `subagent_max_iterations`) accept `0` = unlimited (loop until answered /
   stopped / no-progress); the token budget then becomes the main runaway guard.
