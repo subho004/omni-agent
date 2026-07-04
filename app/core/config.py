@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # Context sizes — Gemini 3 models have a 1M-token window, so feed generously.
     tool_excerpt_chars: int = 48000  # parse_document / crawl_url / read_artifact
     crawl_max_links: int = 150  # max structured links returned by crawl_url
+    # Sitemap discovery (discover_sitemap tool): same-host page URLs mined from
+    # robots.txt + sitemaps. max_urls caps URLs returned; doc_budget caps how many
+    # sitemap/index documents are fetched; timeout is per-HTTP-request seconds.
+    sitemap_max_urls: int = 300
+    sitemap_doc_budget: int = 40
+    sitemap_timeout: float = 12.0
     doc_section_chars: int = 24000  # doc_navigate per-section text
     history_max_turns: int = 24  # conversation turns fed back into planning
     history_turn_chars: int = 8000  # per-turn char cap in the history digest

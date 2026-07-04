@@ -13,6 +13,7 @@ from app.tools.bm25_search import bm25_search_tool
 from app.tools.browser_use_agent import browser_use_tool
 from app.tools.crawl_url import crawl_url_tool
 from app.tools.deep_think import deep_think_tool
+from app.tools.discover_sitemap import discover_sitemap_tool
 from app.tools.doc_navigate import doc_navigate_tool
 from app.tools.download_file import download_file_tool
 from app.tools.gemini_search import gemini_search_tool
@@ -31,6 +32,7 @@ ALL_TOOLS: list[Tool] = [
     python_exec_tool,
     bash_exec_tool,
     crawl_url_tool,
+    discover_sitemap_tool,
     analyze_image_tool,
     gemini_search_tool,
     browser_use_tool,

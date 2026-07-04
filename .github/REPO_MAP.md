@@ -151,16 +151,20 @@ flowchart TD
   focused instruction, its own DB session, and the session's shared context.
 - **Reflection** — a sub-agent's structured self-critique of its own result,
   driving a gather-more loop (distinct from the outer evaluator/replan loop).
-- **Tools** — self-describing units the model can call. Registry (~14):
-  `web_search`, `gemini_search`, `crawl_url`, `browser_use`, `download_file`,
-  `parse_document`, `read_artifact`, `bm25_search`, `doc_navigate`,
-  `analyze_image`, `python_exec`, `bash_exec`, `deep_think`, `spawn_subagents`.
-  Each declares a JSON schema, timeout, and whether it's "breakable" (subject to
-  circuit breaking). `deep_think` is a pure-reasoning tool (no external I/O): it
-  runs the session's own model/thinking level over a hard problem and returns a
-  structured plan/decision (`ThinkingResult`: analysis → options → recommendation
-  → ordered next steps), for planning/deciding/discovery when the next move
-  isn't obvious. `spawn_subagents` fans a task out into parallel child agents and
+- **Tools** — self-describing units the model can call. Registry (~15):
+  `web_search`, `gemini_search`, `crawl_url`, `discover_sitemap`, `browser_use`,
+  `download_file`, `parse_document`, `read_artifact`, `bm25_search`,
+  `doc_navigate`, `analyze_image`, `python_exec`, `bash_exec`, `deep_think`,
+  `spawn_subagents`. Each declares a JSON schema, timeout, and whether it's
+  "breakable" (subject to circuit breaking). `deep_think` is a pure-reasoning
+  tool (no external I/O): it runs the session's own model/thinking level over a
+  hard problem and returns a structured plan/decision (`ThinkingResult`: analysis
+  → options → recommendation → ordered next steps), for planning/deciding/
+  discovery when the next move isn't obvious. `discover_sitemap` enumerates a
+  site's page URLs from robots.txt + sitemaps (httpx-only, recursive; handles XML
+  index/urlset, RSS/Atom, plain-text/markdown and `.gz`) so the agent gets a
+  broad same-host URL inventory to then crawl selectively, rather than clicking
+  link-by-link. `spawn_subagents` fans a task out into parallel child agents and
   needs a `session_factory` on the `ToolContext` (set for orchestrated
   sub-agents, absent on the single-turn chat path). `crawl_url` also returns a
   structured link map (for source-chasing) and a raw-HTML artifact;
