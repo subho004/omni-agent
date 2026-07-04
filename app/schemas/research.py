@@ -113,6 +113,51 @@ class RevisePlan(BaseModel):
     )
 
 
+class ThoughtOption(BaseModel):
+    """One distinct approach the thinking agent weighed before deciding."""
+
+    approach: str = Field(description="A distinct candidate approach or hypothesis.")
+    rationale: str = Field(description="Why this approach could work / what it buys.")
+    tradeoffs: str = Field(
+        description="Its costs, risks, or weaknesses versus the alternatives."
+    )
+
+
+class ThinkingResult(BaseModel):
+    """Structured output of the deep_think reasoning agent.
+
+    Doubles as a Gemini `response_schema`, forcing the model to work the
+    problem through explicitly — frame it, weigh distinct options, commit to a
+    recommendation, and lay out concrete next steps — rather than answering in
+    one undirected pass.
+    """
+
+    analysis: str = Field(
+        description=(
+            "Restate what is REALLY being asked and the crux of the problem — "
+            "the framing, not the answer yet."
+        )
+    )
+    key_considerations: list[str] = Field(
+        description="The facts, constraints, assumptions, and unknowns that matter."
+    )
+    options: list[ThoughtOption] = Field(
+        description=(
+            "Two or more genuinely DISTINCT approaches considered, with their "
+            "trade-offs. Empty only if a single path is truly forced."
+        )
+    )
+    recommendation: str = Field(
+        description="The chosen plan/decision and a clear justification for it."
+    )
+    plan: list[str] = Field(
+        description="Concrete, ordered next steps to execute the recommendation."
+    )
+    open_questions: list[str] = Field(
+        description="What still needs verifying, and the main risks to watch."
+    )
+
+
 class ReviseRequest(BaseModel):
     instruction: str = Field(
         min_length=1,
