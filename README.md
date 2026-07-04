@@ -27,9 +27,14 @@ history.
 > _"Never take no for an answer."_ — the design principle: prefer trying another
 > tool or approach over surfacing a refusal.
 
+<div align="center">
+  <img src="assets/screenshots/01-landing.png" alt="Omni-Agent web UI — sessions sidebar, conversation, and the Plan / Activity / Files panel" width="900" />
+</div>
+
 ## 📑 Table of Contents
 
 - [Highlights](#-highlights)
+- [Screenshots](#-screenshots)
 - [Features](#-features)
 - [Tool Catalogue](#-tool-catalogue)
 - [Architecture](#-architecture)
@@ -51,6 +56,36 @@ history.
 - 📡 **Live streaming** — plan, tool activity, reflections, and the answer stream over SSE; runs can be stopped and revised.
 - 🌍 **Locale-aware** — resolves the visitor's country to localize sources, units, language, and the scraping browser's fingerprint.
 - 💰 **Cost-aware & robust** — token ledger, per-session budgets, timeouts, circuit breakers, caching, and context compaction.
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="assets/screenshots/03-conversation.png" alt="Conversation view with a streamed, Markdown-rendered answer and the live per-turn plan panel" /><br/>
+      <sub><b>Conversation + Plan</b> — the streamed Markdown answer alongside the live per-turn plan.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="assets/screenshots/04-plan.png" alt="Plan tab showing the multi-step DAG with dependencies and per-step results" /><br/>
+      <sub><b>Plan (DAG)</b> — multi-step plan with dependencies (<code>needs 1</code>, <code>needs 2</code>) and per-step results.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="assets/screenshots/05-activity.png" alt="Activity tab showing the persisted event trace: evaluator, self-review, and tool calls" /><br/>
+      <sub><b>Activity trace</b> — evaluator decisions, sub-agent self-review, and every tool call, persisted and replayable.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="assets/screenshots/06-files.png" alt="Files tab showing an uploaded folder with its directory structure preserved" /><br/>
+      <sub><b>Files</b> — uploads (files <em>and</em> folders) shown as a tree with structure preserved.</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="assets/screenshots/02-composer.png" alt="Composer bar with file-attach, folder-attach, Send, and Stop controls" width="900" /><br/>
+  <sub><b>Composer</b> — attach a 📎 file or a 📁 folder (only supported types are ingested), then ask.</sub>
+</p>
 
 ## 🚀 Features
 
@@ -124,7 +159,7 @@ a timeout, and whether it's "breakable" (subject to circuit-breaking).
 | `deep_think` | 🧠 Reasoning | Pure-reasoning step (no I/O): analysis → options → recommendation → next steps. |
 | `spawn_subagents` | 🌱 Orchestration | Fan a task out into N parallel child agents with the full tool set. |
 
-## 🏗️ Architecture
+## 🧱 Architecture
 
 Layered FastAPI service. Routes parse input and call services; services own
 business logic and call repositories; repositories own all DB access.
@@ -195,7 +230,7 @@ uv run uvicorn main:app --reload
 > `uv run` executes inside the project environment automatically — no manual
 > activation needed.
 
-## ⚙️ Configuration
+## 🔧 Configuration
 
 All knobs live in [`.env`](.env.sample) (loaded by `app/core/config.py`). The
 ones most worth knowing:
