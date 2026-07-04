@@ -36,22 +36,28 @@ def _convert_sync(path: str) -> str:
     return _markitdown.convert(path).text_content
 
 
-async def _handle(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    artifact_id = UUID(str(args["artifact_id"]))
-    artifact = await ctx.artifacts.find_by_id(artifact_id)
-    if artifact is None or artifact.session_id != ctx.session_id:
-        return {"error": f"Artifact '{artifact_id}' not found in this session"}
+def convert_to_markdown(path: str) -> str:
+    """Convert a document at ``path`` to markdown (blocking). Shared by
+    parse_document and corpus_search's auto-parse path."""
 
-    logger.info("parse_document: %s (%s)", artifact.name, artifact_id)
-    try:
-        markdown = await asyncio.to_thread(_convert_sync, artifact.uri)
-    except Exception as exc:
-        logger.exception("MarkItDown failed for %s", artifact.uri)
-        return {"error": f"Failed to parse document: {exc}"}
+    return _convert_sync(path)
 
+
+async def ensure_parsed_markdown(
+    ctx: ToolContext, artifact: Any
+) -> tuple[Any, str]:
+    """Parse a source artifact to markdown and persist it as a parsed artifact.
+
+    Converts the document, writes the markdown next to the session's parsed
+    files, and records a ``kind="parsed"`` artifact referencing it. Returns the
+    parsed artifact and its markdown text. Used by both parse_document and
+    corpus_search (which auto-parses any not-yet-parsed upload before indexing).
+    """
+
+    markdown = await asyncio.to_thread(convert_to_markdown, artifact.uri)
     parsed_dir = ctx.data_dir / "parsed" / str(ctx.session_id)
     parsed_dir.mkdir(parents=True, exist_ok=True)
-    md_path = parsed_dir / f"{artifact_id}.md"
+    md_path = parsed_dir / f"{artifact.id}.md"
     md_path.write_text(markdown, encoding="utf-8")
 
     parsed = await ctx.artifacts.create(
@@ -61,6 +67,22 @@ async def _handle(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         uri=str(md_path),
         summary=markdown[:500],
     )
+    return parsed, markdown
+
+
+async def _handle(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    artifact_id = UUID(str(args["artifact_id"]))
+    artifact = await ctx.artifacts.find_by_id(artifact_id)
+    if artifact is None or artifact.session_id != ctx.session_id:
+        return {"error": f"Artifact '{artifact_id}' not found in this session"}
+
+    logger.info("parse_document: %s (%s)", artifact.name, artifact_id)
+    try:
+        parsed, markdown = await ensure_parsed_markdown(ctx, artifact)
+    except Exception as exc:
+        logger.exception("MarkItDown failed for %s", artifact.uri)
+        return {"error": f"Failed to parse document: {exc}"}
+
     return {
         "parsed_artifact_id": str(parsed.id),
         "total_chars": len(markdown),

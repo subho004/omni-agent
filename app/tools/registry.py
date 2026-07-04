@@ -11,6 +11,7 @@ from app.tools.base import Tool
 from app.tools.bash_exec import bash_exec_tool
 from app.tools.bm25_search import bm25_search_tool
 from app.tools.browser_use_agent import browser_use_tool
+from app.tools.corpus_search import corpus_search_tool
 from app.tools.crawl_url import crawl_url_tool
 from app.tools.deep_think import deep_think_tool
 from app.tools.discover_sitemap import discover_sitemap_tool
@@ -29,6 +30,7 @@ ALL_TOOLS: list[Tool] = [
     read_artifact_tool,
     bm25_search_tool,
     doc_navigate_tool,
+    corpus_search_tool,
     python_exec_tool,
     bash_exec_tool,
     crawl_url_tool,

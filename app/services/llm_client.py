@@ -295,6 +295,52 @@ class LlmClient:
             if chunk.text:
                 yield chunk.text
 
+    async def embed_texts(
+        self, texts: list[str], task_type: str
+    ) -> list[list[float]]:
+        """Embed a batch of texts for hybrid retrieval (corpus_search).
+
+        Uses the dedicated embedding model (``settings.embedding_model``), not
+        the chat model, truncated to ``settings.embedding_dimensions`` via the
+        model's Matryoshka support. ``task_type`` should be
+        ``"RETRIEVAL_DOCUMENT"`` for indexed chunks and ``"RETRIEVAL_QUERY"``
+        for the query, so the model places asymmetric query/document pairs in a
+        comparable space. Requests are chunked to ``embedding_batch_size`` and
+        each is retried with backoff on transient failures. Returns one vector
+        per input, in order.
+        """
+
+        if not texts:
+            return []
+
+        config = types.EmbedContentConfig(
+            task_type=task_type,
+            output_dimensionality=settings.embedding_dimensions,
+        )
+        batch = max(settings.embedding_batch_size, 1)
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), batch):
+            chunk = texts[start : start + batch]
+            response = await self._embed_content(
+                model=settings.embedding_model, contents=chunk, config=config
+            )
+            for embedding in response.embeddings or []:
+                vectors.append(list(embedding.values or []))
+        return vectors
+
+    async def _embed_content(self, **kwargs: Any) -> types.EmbedContentResponse:
+        """Call the embeddings SDK with the same backoff as generate calls."""
+
+        async for attempt in _AsyncRetrying(
+            retry=retry_if_exception(_is_retryable),
+            stop=stop_after_attempt(max(settings.llm_max_retries, 1)),
+            wait=wait_exponential(multiplier=1, min=1, max=20),
+            reraise=True,
+        ):
+            with attempt:
+                return await self._client.aio.models.embed_content(**kwargs)
+        raise RuntimeError("unreachable")  # pragma: no cover
+
     async def grounded_search(
         self, prompt: str
     ) -> tuple[str, list[str], int, int]:

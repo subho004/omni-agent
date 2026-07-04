@@ -41,7 +41,7 @@ rather than replying in a single shot.
 | `app/schemas/` | Pydantic DTOs | Request/response models; some double as Gemini structured-output schemas |
 | `app/services/` | Business logic / orchestration | Planner, orchestrator, agent loop, single-agent chat, LLM client, event bus, session use-cases |
 | `app/tools/` | Agent tools + registry | Search, fetch/parse, retrieval, code/shell exec, browser automation, image analysis, plus per-session guard/cache and a shared browser-session factory |
-| `app/retrieval/` | Reasoning retrieval | PageIndex-style section-tree builder for long documents |
+| `app/retrieval/` | Retrieval engine | `page_index.py` (PageIndex section tree for `doc_navigate`), `chunking.py` (structure-aware chunker) + `hybrid.py` (dense+sparse RRF ranking) for cross-document `corpus_search` |
 | `utils/` | Pure helpers | `response.py` (standard API envelope), `geo.py` (country → locale/timezone/geo context), etc. |
 | `tests/` | pytest + httpx | Offline tests with fake LLM via `app.dependency_overrides` |
 | `ui/` | Frontend | Single-file `index.html` (vanilla JS): sessions, streaming, uploads, export, Markdown/Mermaid render; right panel is a tabbed view (Plan / Activity / Files) with per-turn plan groups and downloadable files |
@@ -126,7 +126,8 @@ flowchart TD
 | **Source-chasing extraction** | When a source references another document not yet held, the agent follows the reference instead of stopping at the pointer. `crawl_url` returns clean markdown to read PLUS a structured link map (absolute hrefs, internal/external) and a raw-HTML artifact; the agent crawls/downloads the linked source, `read_artifact`s the HTML for onclick/embedded targets the markdown dropped, or drives `browser_use` for JS interaction. The evaluator/reflect prompts treat "only a pointer, source not fetched" as **not done**, so the existing plan-reshaping and gather-more loops iterate until the primary source is in hand. |
 | **Sub-agent self-reflection** | After each pass, a sub-agent critiques its own result ("sufficient, or gather more?") and loops until sufficient or a cap. |
 | **Dynamic robustness** | Per-tool timeouts, per-session circuit breaker for flaky tools, in-session result cache, no-progress guard, refusal detection. |
-| **File / image Q&A** | Uploads become session artifacts; agents `parse_document` → `bm25_search` / `doc_navigate` (PageIndex); images are auto-described via Gemini vision. |
+| **File / image Q&A** | Uploads become session artifacts; agents `parse_document` → `bm25_search` / `doc_navigate` (PageIndex) for a single document, or `corpus_search` for cross-document retrieval; images are auto-described via Gemini vision. |
+| **Cross-document retrieval (RAG)** | `corpus_search` searches the whole session corpus at once: it chunks every parsed document (auto-parsing not-yet-parsed uploads) plus image vision-descriptions, ranks with dense **embeddings** + sparse **BM25** fused via **Reciprocal Rank Fusion**, then LLM-reranks the candidates — the shape used by OpenAI file_search / Vertex RAG. Chunk embeddings are cached on disk per source artifact so repeat queries and later turns never re-embed. Complements the single-document `bm25_search`/`doc_navigate`. |
 | **Model & thinking selection** | Per-session choice of model + thinking level (low/medium/high) from a central catalogue; drives context window and output caps. |
 | **Country/locale context** | The visitor's country is resolved per request: the UI detects it from `navigator.language` and sends `X-User-Country`; a router dependency stores it in a context var (`app/core/request_context.py`) that overrides the `USER_COUNTRY` env default. Resolved via `utils/geo.py`, it is injected into every agent prompt alongside the date/day and pins the scraping browser's locale, timezone, capital geolocation, and `Accept-Language` header so crawls present the user's region. Empty = no bias (date-only prompts, randomized browser locale). |
 | **Context management** | Large excerpts/history fed generously; loop context compacted (summarized) when it exceeds a model-derived threshold. |
@@ -151,11 +152,11 @@ flowchart TD
   focused instruction, its own DB session, and the session's shared context.
 - **Reflection** — a sub-agent's structured self-critique of its own result,
   driving a gather-more loop (distinct from the outer evaluator/replan loop).
-- **Tools** — self-describing units the model can call. Registry (~15):
+- **Tools** — self-describing units the model can call. Registry (~16):
   `web_search`, `gemini_search`, `crawl_url`, `discover_sitemap`, `browser_use`,
   `download_file`, `parse_document`, `read_artifact`, `bm25_search`,
-  `doc_navigate`, `analyze_image`, `python_exec`, `bash_exec`, `deep_think`,
-  `spawn_subagents`. Each declares a JSON schema, timeout, and whether it's
+  `doc_navigate`, `corpus_search`, `analyze_image`, `python_exec`, `bash_exec`,
+  `deep_think`, `spawn_subagents`. Each declares a JSON schema, timeout, and whether it's
   "breakable" (subject to circuit breaking). `deep_think` is a pure-reasoning
   tool (no external I/O): it runs the session's own model/thinking level over a
   hard problem and returns a structured plan/decision (`ThinkingResult`: analysis
@@ -174,7 +175,15 @@ flowchart TD
   output), referenced by id and surfaced to agents so they can act on it. A
   crawl stores both a parsed-markdown artifact and a raw-HTML one.
 - **PageIndex retrieval** — reasoning-based navigation of a long document via a
-  section tree (`doc_navigate`), complementing lexical `bm25_search`.
+  section tree (`doc_navigate`), complementing lexical `bm25_search`. Both are
+  single-document.
+- **Hybrid corpus retrieval** — `corpus_search` is the cross-document, RAG-grade
+  path: `retrieval/chunking.py` chunks every document structure-aware,
+  `retrieval/hybrid.py` fuses dense embedding-cosine and sparse BM25 rankings
+  with Reciprocal Rank Fusion, and the tool LLM-reranks the top candidates.
+  Embeddings come from `LlmClient.embed_texts` (a dedicated embedding model) and
+  are cached on disk per source artifact (`data/embeddings/`, keyed by model +
+  chunk params, so a settings change invalidates them).
 - **ToolContext** — the per-call bundle passed to tools (session id, artifact
   repo, data dir, optional LLM + ledger).
 - **Circuit breaker / tool cache** — per-session, keyed by `(session, tool[, args])`;
@@ -194,7 +203,8 @@ flowchart TD
 
 | Dependency | Role |
 | --- | --- |
-| **Google Gemini** (`google-genai`) | The single LLM provider: planning, tool-calling, structured output, streaming, vision, grounded search. Model ids/limits in `core/models.py`. |
+| **Google Gemini** (`google-genai`) | The single LLM provider: planning, tool-calling, structured output, streaming, vision, grounded search, **and embeddings** (`gemini-embedding-001` for `corpus_search`). Model ids/limits in `core/models.py`. |
+| **NumPy** | Vector math for hybrid retrieval (embedding cosine similarity, cached embedding matrices). |
 | **SQLite** via `aiosqlite` + async SQLAlchemy 2.x | Persistence (sessions, messages, plan nodes, artifacts, ledger, run events). URL is configurable (Postgres-capable). |
 | **FastAPI + Uvicorn** | HTTP framework and ASGI server; SSE for streaming. |
 | **NetworkX** | Plan DAG construction / readiness scheduling. |

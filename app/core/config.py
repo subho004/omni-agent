@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     database_url: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.1-flash-lite"
+    # Embeddings for hybrid corpus retrieval (corpus_search). A dedicated
+    # embedding model turns document chunks + the query into vectors for the
+    # dense/semantic half of retrieval. gemini-embedding-001 supports Matryoshka
+    # truncation, so a smaller dimension trades a little accuracy for cheaper
+    # storage/compute — 768 is a good default.
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimensions: int = 768
+    embedding_batch_size: int = 100  # texts per embed_content request
     # Tuned for accuracy/robustness — persist through blocks, replan freely.
     # Iteration caps accept 0 (or any non-positive value) to mean "no limit":
     # the loop then runs until the model answers / stop / no-progress guard.
@@ -72,6 +80,17 @@ class Settings(BaseSettings):
     sitemap_doc_budget: int = 40
     sitemap_timeout: float = 12.0
     doc_section_chars: int = 24000  # doc_navigate per-section text
+    # Hybrid cross-document retrieval (corpus_search): chunks every parsed
+    # document (and image descriptions) in the session, then ranks with dense
+    # embeddings + sparse BM25 fused via Reciprocal Rank Fusion (RRF) and an
+    # optional LLM rerank — the shape used by OpenAI file_search / Vertex RAG.
+    corpus_chunk_chars: int = 1200  # target chunk size fed to the embedder
+    corpus_chunk_overlap: int = 200  # char overlap between adjacent chunks
+    corpus_candidate_k: int = 30  # fused candidates considered before rerank
+    corpus_top_k: int = 8  # passages returned to the agent (default)
+    corpus_max_chunks: int = 6000  # safety cap on total chunks indexed per query
+    corpus_rrf_k: int = 60  # RRF damping constant (standard default)
+    corpus_rerank: bool = True  # LLM-rerank the fused candidates for precision
     history_max_turns: int = 24  # conversation turns fed back into planning
     history_turn_chars: int = 8000  # per-turn char cap in the history digest
     # Web search: ddgs region (e.g. wt-wt worldwide, us-en, uk-en, in-en). The

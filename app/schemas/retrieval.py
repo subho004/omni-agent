@@ -14,4 +14,16 @@ class SectionSelection(BaseModel):
     reason: str = Field(description="Brief justification for the choice.")
 
 
-__all__ = ["SectionSelection"]
+class RerankSelection(BaseModel):
+    """Candidate passage ids reordered most-relevant-first for a query."""
+
+    ranked_ids: list[int] = Field(
+        description=(
+            "Candidate passage ids ordered from most to least relevant to the "
+            "query. Include only ids that actually help answer the query; drop "
+            "irrelevant ones."
+        )
+    )
+
+
+__all__ = ["SectionSelection", "RerankSelection"]
