@@ -237,9 +237,12 @@
     </section>
   </div>
   <div class="bar">
-    <label class="attach" id="attach" title="Attach files or images (PDF, DOCX, TXT, PNG…)">📎
+    <label class="attach" id="attach" title="Attach files or images (PDF, DOCX, XLSX, PPTX, TXT, CSV, PNG…)">📎
       <input id="file" type="file" multiple hidden
-        accept=".pdf,.docx,.doc,.txt,.md,.csv,.json,.html,image/*" />
+        accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt,.md,.csv,.tsv,.json,.xml,.html,.htm,.rtf,.epub,image/*" />
+    </label>
+    <label class="attach" id="attachDir" title="Attach a folder (only supported files are uploaded)">📁
+      <input id="dir" type="file" multiple hidden webkitdirectory directory />
     </label>
     <textarea id="q" rows="1"
       placeholder="Ask a research question, or attach a file and ask about it…  (Enter to send, Shift+Enter for a new line)"></textarea>
@@ -748,27 +751,53 @@ async function newChat() {
 }
 
 // ---- File / image uploads ----
+// Extensions we can parse/analyze — kept in sync with the backend
+// SUPPORTED_UPLOAD_EXTENSIONS. Folder picks are filtered to these client-side.
+const SUPPORTED_EXTS = new Set([
+  "pdf","docx","doc","xlsx","xls","pptx","ppt","html","htm","txt","md",
+  "csv","tsv","json","xml","rtf","epub",
+  "png","jpg","jpeg","gif","webp","bmp",
+]);
+const extOf = (name) => (name.split(".").pop() || "").toLowerCase();
+const isSupported = (name) => SUPPORTED_EXTS.has(extOf(name));
+// A folder pick tags each file with webkitRelativePath (e.g. "docs/report.pdf");
+// plain file picks don't. Preserve it so the backend keeps the folder structure.
+const relOf = (f) => f.webkitRelativePath || f.name;
+
 async function uploadFiles(files) {
   if (!files.length) return;
-  if (!sessionId) sessionId = await createSession(files[0].name);
+  const supported = files.filter((f) => isSupported(relOf(f)));
+  const skipped = files.length - supported.length;
+  if (skipped) log(`⚠ skipped ${skipped} unsupported file(s)`);
+  if (!supported.length) {
+    setStatus("no supported files to upload");
+    return;
+  }
+  if (!sessionId) sessionId = await createSession(relOf(supported[0]));
   $("attach").classList.add("busy");
-  for (const f of files) {
+  $("attachDir").classList.add("busy");
+  let ok = 0;
+  for (const f of supported) {
+    const rel = relOf(f);
     const fd = new FormData();
     fd.append("file", f);
+    fd.append("relpath", rel);
     try {
       const r = await fetch(`/sessions/${sessionId}/files`, { method: "POST", body: fd });
       if (!r.ok) throw new Error(await r.text());
       const a = (await r.json()).data;
       addBubble("You", `📎 ${a.name}${a.summary ? " — " + a.summary : ""}`, "user");
       log(`📎 uploaded ${a.name}`);
+      ok++;
     } catch (e) {
-      addBubble("Error", `Upload failed for ${f.name}`, "assistant");
+      addBubble("Error", `Upload failed for ${rel}`, "assistant");
     }
   }
   $("attach").classList.remove("busy");
-  setStatus("file ready — ask about it");
+  $("attachDir").classList.remove("busy");
+  setStatus(ok ? `${ok} file(s) ready — ask about them` : "upload failed");
   await loadFiles(sessionId);
-  showTab("files");  // surface the just-uploaded file
+  showTab("files");  // surface the just-uploaded files
   await loadSessions();
 }
 
@@ -903,6 +932,9 @@ function showTab(name) {
 for (const t of TABS) t.addEventListener("click", () => showTab(t.dataset.tab));
 
 $("file").addEventListener("change", (e) => {
+  uploadFiles([...e.target.files]); e.target.value = "";
+});
+$("dir").addEventListener("change", (e) => {
   uploadFiles([...e.target.files]); e.target.value = "";
 });
 $("exportMd").addEventListener("click", () => exportChat(false));

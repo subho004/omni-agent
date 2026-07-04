@@ -35,19 +35,16 @@ from app.core.logging import get_logger
 from app.retrieval.chunking import chunk_markdown
 from app.retrieval.hybrid import hybrid_search
 from app.schemas.retrieval import RerankSelection
-from app.tools.base import Tool, ToolContext, image_mime_for
+from app.tools.base import (
+    DOCUMENT_EXTENSIONS,
+    Tool,
+    ToolContext,
+    image_mime_for,
+)
 from app.tools.parse_document import ensure_parsed_markdown
 
 logger = get_logger(__name__)
 
-# Document uploads corpus_search will auto-parse (MarkItDown-supported) when the
-# agent hasn't run parse_document on them yet. Images are handled separately via
-# their vision summary; anything else is skipped.
-_PARSEABLE_EXTENSIONS = {
-    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-    ".html", ".htm", ".txt", ".md", ".csv", ".tsv", ".json", ".xml",
-    ".rtf", ".epub",
-}
 _RERANK_PASSAGE_CHARS = 600  # per-candidate text shown to the reranker
 MAX_TOP_K = 20
 
@@ -207,7 +204,7 @@ async def _gather_corpus(
             summary = (artifact.summary or "").strip()
             if summary and not summary.endswith("bytes)"):
                 markdown = f"# Image: {artifact.name}\n\n{summary}"
-        elif Path(artifact.name).suffix.lower() in _PARSEABLE_EXTENSIONS:
+        elif Path(artifact.name).suffix.lower() in DOCUMENT_EXTENSIONS:
             if f"{artifact.name}.md" in parsed_names:
                 continue  # already represented by its parsed artifact
             try:

@@ -6,7 +6,11 @@ from pathlib import Path
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.exceptions import NotFoundError, SessionNotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    NotFoundError,
+    SessionNotFoundError,
+)
 from app.core.logging import get_logger
 from app.repositories.agent_session_repository import AgentSessionRepository
 from app.repositories.artifact_repository import ArtifactRepository
@@ -20,7 +24,7 @@ from app.schemas.agent_session import (
     SessionResponse,
 )
 from app.services.llm_client import LlmClient
-from app.tools.base import image_mime_for
+from app.tools.base import image_mime_for, is_supported_upload
 
 logger = get_logger(__name__)
 
@@ -113,24 +117,53 @@ class SessionService:
     async def save_upload(
         self, session_id: UUID, filename: str, content: bytes
     ) -> ArtifactResponse:
+        """Persist one uploaded file (from a file or folder pick).
+
+        ``filename`` may be a relative path (e.g. ``docs/report.pdf`` from a
+        folder upload); its directory structure is preserved on disk and kept as
+        the artifact name so the Files tree shows where it came from. Unsupported
+        file types are rejected — folder uploads should filter to supported files
+        before sending, and this is the backstop.
+        """
+
         await self._require_session(session_id)
+        rel_name = self._sanitize_relpath(filename)
+        if not is_supported_upload(rel_name):
+            raise BadRequestError(f"Unsupported file type: {rel_name}")
+
         uploads_dir = Path(settings.data_dir) / "uploads" / str(session_id)
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(filename).name or "upload.bin"
-        file_path = uploads_dir / safe_name
+        file_path = uploads_dir / rel_name
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
         summary = await self._describe_if_image(
-            session_id, safe_name, content, len(content)
+            session_id, rel_name, content, len(content)
         )
         artifact = await self._artifacts.create(
             session_id=session_id,
             kind="upload",
-            name=safe_name,
+            name=rel_name,
             uri=str(file_path),
             summary=summary,
         )
         return ArtifactResponse.model_validate(artifact)
+
+    @staticmethod
+    def _sanitize_relpath(filename: str) -> str:
+        """Reduce an upload's (possibly relative) name to a safe relative path.
+
+        Normalises separators, drops empty / ``.`` / ``..`` segments and reduces
+        each segment to its basename, so a folder upload keeps its structure
+        (``docs/a.pdf``) while path-traversal (``../``, absolute paths) can't
+        escape the session's uploads directory.
+        """
+
+        parts = [
+            Path(segment).name
+            for segment in filename.replace("\\", "/").split("/")
+            if segment and segment not in (".", "..")
+        ]
+        return "/".join(p for p in parts if p) or "upload.bin"
 
     async def _describe_if_image(
         self, session_id: UUID, name: str, content: bytes, size: int

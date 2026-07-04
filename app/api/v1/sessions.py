@@ -7,7 +7,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, UploadFile
+from fastapi import APIRouter, Depends, Form, Header, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -389,13 +389,17 @@ async def download_artifact(
 async def upload_file(
     session_id: UUID,
     file: UploadFile,
+    relpath: str | None = Form(default=None),
     service: SessionService = Depends(get_session_service),
 ) -> JSONResponse:
+    # `relpath` carries the file's path within a picked folder (e.g.
+    # "docs/report.pdf"); the browser only sends the basename in the file part,
+    # so folder uploads pass the relative path here to preserve structure.
     content = await file.read()
     if not content:
         raise BadRequestError("Uploaded file is empty")
     artifact = await service.save_upload(
-        session_id, file.filename or "upload.bin", content
+        session_id, relpath or file.filename or "upload.bin", content
     )
     return success_response(
         data=artifact, message="File uploaded", status_code=201

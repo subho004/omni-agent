@@ -46,6 +46,26 @@ def image_mime_for(name: str) -> str | None:
     return _MIME_BY_EXT.get(Path(name).suffix.lower())
 
 
+# Document extensions MarkItDown can convert to markdown (parse_document /
+# corpus_search auto-parse). Images are handled separately (vision).
+DOCUMENT_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+    ".html", ".htm", ".txt", ".md", ".csv", ".tsv", ".json", ".xml",
+    ".rtf", ".epub",
+}
+
+# Everything a user may upload and we can actually use downstream: parseable
+# documents plus images. The single source of truth the upload path validates
+# against (folder uploads skip anything not in here).
+SUPPORTED_UPLOAD_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
+
+
+def is_supported_upload(name: str) -> bool:
+    """Whether an uploaded filename has an extension we can parse/analyze."""
+
+    return Path(name).suffix.lower() in SUPPORTED_UPLOAD_EXTENSIONS
+
+
 @dataclass
 class ToolContext:
     """Per-request context handed to every tool handler."""
@@ -94,5 +114,8 @@ __all__ = [
     "ToolContext",
     "ToolHandler",
     "IMAGE_EXTENSIONS",
+    "DOCUMENT_EXTENSIONS",
+    "SUPPORTED_UPLOAD_EXTENSIONS",
     "image_mime_for",
+    "is_supported_upload",
 ]
