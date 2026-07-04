@@ -6,10 +6,21 @@ services:
     env_file:
       - path: .env
         required: false
-    environment:
-      HOST: 0.0.0.0
+    # Reap zombie processes left behind by headless Chromium (crawl4ai /
+    # browser_use spawn short-lived browser children on every call).
+    init: true
+    # Persist the SQLite DB, uploads (incl. folder uploads), parsed docs, and the
+    # embedding cache across container restarts.
+    volumes:
+      - omni-data:/app/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
+      # Give the app time to initialise the DB on first boot before probing.
+      start_period: 20s
+
+volumes:
+  omni-data:

@@ -12,3 +12,9 @@ __pycache__
 .vscode
 .github
 tests
+# Runtime data (SQLite DB, uploads, parsed docs, embeddings, exec scratch) —
+# lives on the omni-data volume, must not be baked into the image.
+data
+.claude
+docs
+assets
