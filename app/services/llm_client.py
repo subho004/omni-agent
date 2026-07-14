@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
 
+import aiohttp
 from google import genai
 from google.genai import errors, types
 from tenacity import (
@@ -70,14 +71,29 @@ def _with_context(system_instruction: str) -> str:
     return f"{header}\n\n{system_instruction}"
 
 
-def _is_retryable(exc: BaseException) -> bool:
-    """Transient Gemini/network failures worth retrying (429, 5xx, timeouts)."""
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """Transient Gemini/network failures worth retrying.
+
+    Covers HTTP-level failures from the genai SDK (429, 5xx) as well as
+    lower-level transport failures — dropped connections, incomplete
+    responses, and timeouts — that surface as ``aiohttp.ClientError``
+    subclasses (``ClientPayloadError``/``TransferEncodingError``,
+    ``ServerDisconnectedError``, ``ClientConnectionResetError``, etc.) when a
+    connection resets mid-request or mid-stream. Plain built-in
+    ``TimeoutError``/``ConnectionError`` are kept for non-aiohttp transports.
+    """
 
     if isinstance(exc, errors.ServerError):
         return True
     if isinstance(exc, errors.ClientError):
         return getattr(exc, "code", None) == 429
+    if isinstance(exc, aiohttp.ClientError):
+        return True
     return isinstance(exc, (TimeoutError, ConnectionError))
+
+
+# Backwards-compatible private alias (module-internal use below).
+_is_retryable = is_retryable_llm_error
 
 
 @dataclass
@@ -152,6 +168,29 @@ class LlmClient:
                         attempt.retry_state.attempt_number,
                     )
                 return await self._client.aio.models.generate_content(**kwargs)
+        raise RuntimeError("unreachable")  # pragma: no cover
+
+    async def _generate_content_stream(self, **kwargs: Any) -> AsyncIterator[Any]:
+        """Open a streaming call with backoff on transient failures.
+
+        Only guards the connection setup (before any chunk is received) —
+        see the comment at the call site in ``generate_stream`` for why
+        mid-stream resets are handled one layer up instead.
+        """
+
+        async for attempt in _AsyncRetrying(
+            retry=retry_if_exception(_is_retryable),
+            stop=stop_after_attempt(max(settings.llm_max_retries, 1)),
+            wait=wait_exponential(multiplier=1, min=1, max=20),
+            reraise=True,
+        ):
+            with attempt:
+                if attempt.retry_state.attempt_number > 1:
+                    logger.warning(
+                        "Retrying Gemini stream open (attempt %d)",
+                        attempt.retry_state.attempt_number,
+                    )
+                return await self._client.aio.models.generate_content_stream(**kwargs)
         raise RuntimeError("unreachable")  # pragma: no cover
 
     async def generate(
@@ -277,7 +316,14 @@ class LlmClient:
             thinking_config=self._thinking_config(),
             max_output_tokens=self._max_output_tokens(),
         )
-        stream = await self._client.aio.models.generate_content_stream(
+        # Retries here only cover failures before the first byte (e.g. a
+        # dropped connection while establishing the stream); a reset that
+        # happens mid-stream, after chunks have already been yielded to the
+        # caller, can't be silently retried without duplicating output — the
+        # caller (PlannerService.synthesize_stream) handles that case by
+        # resuming from the partial answer, the same way it resumes after
+        # hitting the output-token cap.
+        stream = await self._generate_content_stream(
             model=self.model,
             contents=cast("types.ContentListUnion", list(contents)),
             config=config,
@@ -389,4 +435,4 @@ def _extract_sources(response: Any) -> list[str]:
     return sources
 
 
-__all__ = ["LlmClient", "LlmResult"]
+__all__ = ["LlmClient", "LlmResult", "is_retryable_llm_error"]

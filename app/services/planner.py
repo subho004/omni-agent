@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.schemas.research import EvalDecision, Plan, RevisePlan, StepReflection
 from app.services.agent_loop import build_model_content, build_user_content
-from app.services.llm_client import LlmClient
+from app.services.llm_client import LlmClient, is_retryable_llm_error
 from app.tools.registry import ALL_TOOLS
 
 logger = get_logger(__name__)
@@ -309,9 +309,11 @@ class PlannerService:
             return
 
         max_parts = settings.max_synthesis_parts
+        max_stream_retries = max(settings.llm_max_retries, 1)
         total_in = total_out = 0
         written = ""
         part = 0
+        stream_retries = 0
         while True:
             part += 1
             if on_new_part is not None:
@@ -325,13 +327,36 @@ class PlannerService:
 
             part_sink: dict[str, int] = {}
             before = len(written)
-            async for chunk in self._llm.generate_stream(
-                contents, _SYNTH_SYSTEM, part_sink
-            ):
-                written += chunk
-                yield chunk
+            try:
+                async for chunk in self._llm.generate_stream(
+                    contents, _SYNTH_SYSTEM, part_sink
+                ):
+                    written += chunk
+                    yield chunk
+            except Exception as exc:  # noqa: BLE001 - re-raised if not transient
+                if not is_retryable_llm_error(exc):
+                    raise
+                stream_retries += 1
+                if stream_retries > max_stream_retries:
+                    raise
+                logger.warning(
+                    "Stream interrupted mid-answer (%s); resuming from %d "
+                    "chars written (retry %d/%d)",
+                    exc,
+                    len(written),
+                    stream_retries,
+                    max_stream_retries,
+                )
+                # Retry this part from where the answer left off; doesn't
+                # count against max_synthesis_parts (that budget is for
+                # legitimate output-cap continuations, not connection drops).
+                part -= 1
+                continue
             total_in += part_sink.get("in", 0)
             total_out += part_sink.get("out", 0)
+
+            # A clean part resets the retry budget for the next one.
+            stream_retries = 0
 
             # Stop when the model finished naturally, produced nothing new (no
             # point re-asking), or we've chained the configured maximum parts.
